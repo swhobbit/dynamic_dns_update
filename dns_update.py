@@ -15,7 +15,7 @@ import urlparse
 import urllib2
 
 __AUTHOR__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
-__VERSION__ = '0.9'
+__VERSION__ = '0.9.1'
 
 # Provide Server side flags
 _PASSWORD_FLAG = 'password'
@@ -33,6 +33,7 @@ _MX_FLAG = 'mx'
 _WILDCARD_FLAG = 'wildcard'
 _OFFLINE_FLAG = 'offline'
 _CACHE_PROVIDER_ADDRESS = 'cache_provider_address'
+_CHECK_PROVIDER_ADDRESS = 'check_provider_address'
 
 # Flags used by program itself.
 _CONFIGURATION_FILE_FLAG = 'from'
@@ -43,7 +44,8 @@ _DELAY_INTERVAL_FLAG = 'delay_interval'
 _CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS = '_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS'
 
 # Providers
-_GENERIC = 'generic'
+_SIMPLE = 'simple'
+_EXTENDED = 'extended'
 _GOOGLE = 'google'
 _EASYDNS = 'easydns'
 _TUNNEL_BROKER = 'tunnelbroker'
@@ -65,7 +67,8 @@ class Provider(object):
                update_url=None,
                query_url='https://domains.google.com/checkip',
                enabled_flags=None,
-               cache_provider_address=False):
+               cache_provider_address=False,
+               check_provider_address=True):
     self.name = name
     self.update_url = update_url
     # 'http://domains.google.com/checkip' doesn't work if on IPv6-enabled
@@ -73,10 +76,12 @@ class Provider(object):
     self.query_url = query_url
     self.enabled_flags = frozenset(enabled_flags or [])
     self.cache_provider_address = cache_provider_address
+    self.check_provider_address = check_provider_address
 
 _PROVIDERS = {
-    _GENERIC:Provider(_GENERIC,
-                      enabled_flags=Provider.generic_optional_flags),
+    _SIMPLE:Provider(_SIMPLE),
+    _EXTENDED:Provider(_EXTENDED,
+                       enabled_flags=Provider.generic_optional_flags),
     _EASYDNS:Provider(_EASYDNS,
                       update_url='https://members.easydns.com/dyn/dyndns.php',
                       enabled_flags=Provider.generic_optional_flags),
@@ -84,7 +89,7 @@ _PROVIDERS = {
                      enabled_flags=[_QUERY_URL_FLAG],
                      update_url='https://domains.google.com/nic/update'),
     _TUNNEL_BROKER:Provider(_TUNNEL_BROKER,
-                            query_url=None, # No hostname to query
+                            check_provider_address=False, # No hostname to query
                             cache_provider_address=True,
                             update_url='https://ipv4.tunnelbroker.net/'
                             'nic/update'),
@@ -96,10 +101,10 @@ def _PreparseArguments(args):
       description='Dynamic DNS client provider',
       add_help=False)
 
-  provider = _PROVIDERS[_GENERIC]
+  provider = _PROVIDERS[_EXTENDED]
   is_configuration_needed = False
 
-  _BuildGeneralArguments(preparser, provider)
+  _BuildGeneralArguments(preparser)
   _BuildProviderArguments(preparser, provider, is_configuration_needed)
   _BuildClientArguments(preparser, provider, is_configuration_needed)
   _BuildFileArguments(preparser, filetype=str)
@@ -110,17 +115,20 @@ def _PreparseArguments(args):
 
   return (provider, is_configuration_needed)
 
-def _BuildGeneralArguments(parser, provider):
+def _BuildGeneralArguments(parser):
   """Add general program related switches to the command line parser."""
-
   general = parser.add_argument_group('General', 'General Program flags')
+  general.add_argument('--version',
+                       '-v',
+                       help='Print the program version',
+                       action='version',
+                       version='%(prog)s by {} version {}'.format(
+                           __AUTHOR__, __VERSION__))
 
-  # We add the provider flag so it shows up in help, and so it can be ignored
-  # when parsing the full command line.
   general.add_argument(_COMMAND_PREFIX + _PROVIDER_NAME_FLAG,
                        '-P',
-                       choices=_PROVIDERS.keys(),
-                       default=provider.name,
+                       choices=sorted(_PROVIDERS.keys()),
+                       default=_SIMPLE,
                        help='Provide defaults (such as the server update URL) '
                        'and set '
                        'restrictions consistent with the specified provider')
@@ -139,12 +147,6 @@ def _BuildGeneralArguments(parser, provider):
       'line when using this flag; it be must loaded from a configuration file '
       'written with the {}{} flag instead.'.format(_COMMAND_PREFIX,
                                                    _SAVE_FILE_FLAG))
-  general.add_argument('--version',
-                       '-v',
-                       help='Print the program version',
-                       action='version',
-                       version='%(prog)s by {} version {}'.format(
-                           __AUTHOR__, __VERSION__))
 
 
 def _BuildProviderArguments(parser, provider, is_configuration_needed):
@@ -154,15 +156,7 @@ def _BuildProviderArguments(parser, provider, is_configuration_needed):
   url_default = provider.update_url or argparse.SUPPRESS
 
   server = parser.add_argument_group('Provider', 'DNS Service provider flags')
-  server.add_argument(
-      _COMMAND_PREFIX + _UPDATE_URL_FLAG,
-      '-u',
-      metavar='URL',
-      required=url_required,
-      default=url_default,
-      help='DNS service provider web address for IP address updates. '
-      'Default for provider "{}" is {}'.format(provider.name,
-                                               provider.update_url))
+
   server.add_argument(_COMMAND_PREFIX + _USERNAME_FLAG, '-U',
                       default=argparse.SUPPRESS,
                       required=is_configuration_needed,
@@ -172,6 +166,52 @@ def _BuildProviderArguments(parser, provider, is_configuration_needed):
                       required=is_configuration_needed,
                       default=argparse.SUPPRESS,
                       help='Password/authorization token on provider server')
+  server.add_argument(
+      _COMMAND_PREFIX + _UPDATE_URL_FLAG,
+      '-u',
+      metavar='URL',
+      required=url_required,
+      default=url_default,
+      help='DNS service provider web address for IP address updates. '
+      'Default for provider "{}" is {}'.format(provider.name,
+                                               provider.update_url))
+
+  exclusive = server.add_mutually_exclusive_group()
+  exclusive.add_argument(_COMMAND_PREFIX + _CHECK_PROVIDER_ADDRESS,
+                         '-k',
+                         default=provider.check_provider_address,
+                         action='store_true',
+                         help='Check the current address reported for the '
+                         'hostname (specified by {}{} by DNS, '
+                         'and skip updating the '
+                         'provider if the address reported by DNS is '
+                         'correct'.format(_COMMAND_PREFIX, _HOSTNAME_FLAG))
+  exclusive.add_argument(_COMMAND_PREFIX + _NO_PREFIX + _CHECK_PROVIDER_ADDRESS,
+                         '-K',
+                         dest=_CHECK_PROVIDER_ADDRESS,
+                         default=argparse.SUPPRESS,
+                         action='store_false',
+                         help='Do not cache the current cliernt address set at '
+                         'the provider when polling.')
+
+  exclusive = server.add_mutually_exclusive_group()
+  exclusive.add_argument(_COMMAND_PREFIX + _CACHE_PROVIDER_ADDRESS,
+                         '-c',
+                         default=provider.cache_provider_address,
+                         action='store_true',
+                         help='When polling via the {}{}, '
+                         'remember the address currently set at the provider, '
+                         'and do not attempt to update it if the current '
+                         'client public address has '
+                         'changed.'.format(_COMMAND_PREFIX,
+                                           _DELAY_INTERVAL_FLAG))
+  exclusive.add_argument(_COMMAND_PREFIX + _NO_PREFIX + _CACHE_PROVIDER_ADDRESS,
+                         '-C',
+                         dest=_CACHE_PROVIDER_ADDRESS,
+                         default=argparse.SUPPRESS,
+                         action='store_false',
+                         help='Do not cache the current cliernt address set at '
+                         'the provider when polling.')
 
 
 def _BuildClientArguments(parser, provider, is_configuration_needed):
@@ -253,25 +293,6 @@ def _BuildClientArguments(parser, provider, is_configuration_needed):
                            const='OFF',
                            help='Set the specified host as wildcard host for '
                                 'the specified domain.')
-
-  exclusive = client.add_mutually_exclusive_group()
-  exclusive.add_argument(_COMMAND_PREFIX + _CACHE_PROVIDER_ADDRESS,
-                         '-c',
-                         default=provider.cache_provider_address,
-                         action='store_true',
-                         help='When polling via the {}{}, '
-                         'remember the address currently set at the provider, '
-                         'and do not attempt to update it if the current '
-                         'client public address has '
-                         'changed.'.format(_COMMAND_PREFIX,
-                                           _DELAY_INTERVAL_FLAG))
-  exclusive.add_argument(_COMMAND_PREFIX + _NO_PREFIX + _CACHE_PROVIDER_ADDRESS,
-                         '-C',
-                         dest=_CACHE_PROVIDER_ADDRESS,
-                         default=argparse.SUPPRESS,
-                         action='store_false',
-                         help='Do not cache the current cliernt address set at '
-                         'the provider when polling.')
 
   if _BACK_MX_FLAG in provider.enabled_flags:
     exclusive = client.add_mutually_exclusive_group()
@@ -388,13 +409,13 @@ def _BuildCommandLineParser(args):
       add_help=True,
       epilog='The above listed flags are valid for provider "{}". '
       'For the flags valid for another provider, specifiy the {}{} flag '
-      'before the {}help flag on the command '
+      'with the {}help flag on the command '
       'line.'.format(provider.name,
                      _COMMAND_PREFIX,
                      _PROVIDER_NAME_FLAG,
                      _COMMAND_PREFIX))
 
-  _BuildGeneralArguments(parser, provider)
+  _BuildGeneralArguments(parser)
   _BuildProviderArguments(parser, provider, is_configuration_needed)
   _BuildClientArguments(parser, provider, is_configuration_needed)
   _BuildFileArguments(parser)
@@ -434,32 +455,36 @@ def _GetRecordedDNSAddress(configuration):
   """Report IPv4 address of specified hostname as known by provider."""
   if _CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS in configuration:
     return configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS]
-  try:
-    return socket.inet_aton(socket.gethostbyname(configuration[_HOSTNAME_FLAG]))
-  except IOError, _:
+  elif configuration[_CHECK_PROVIDER_ADDRESS]:
+    try:
+      return socket.inet_aton(socket.gethostbyname(
+          configuration[_HOSTNAME_FLAG]))
+    except IOError, _:
+      return None
+  else:
+    # checking not enabled.
     return None
-
 
 def _QueryCurrentIPAddress(configuration, override_url=None):
   """Query a remote webserver to determine our possibly NATted address."""
   if _QUERY_URL_FLAG not in configuration or not configuration[_QUERY_URL_FLAG]:
     return None
 
-  url = urlparse.urlsplit(override_url or configuration[_QUERY_URL_FLAG])
-  
+  url_parts = urlparse.urlsplit(override_url or configuration[_QUERY_URL_FLAG])
+
   # The secret sauce for both HTTP and HTTPS below is the source address of
   # 0.0.0.0, which implicitly forces IPv4 for the connection.
-  if url.scheme == 'http':
+  if url_parts.scheme == 'http':
     connection = httplib.HTTPConnection(
-        url.hostname,
-        url.port or httplib.HTTP_PORT,
+        url_parts.hostname,
+        url_parts.port or httplib.HTTP_PORT,
         True,
         None,
         ('0.0.0.0', 0))
-  elif url.scheme == 'https':
+  elif url_parts.scheme == 'https':
     connection = httplib.HTTPSConnection(
-        url.hostname,
-        url.port or httplib.HTTPS_PORT,
+        url_parts.hostname,
+        url_parts.port or httplib.HTTPS_PORT,
         None,
         None,
         True,
@@ -467,14 +492,16 @@ def _QueryCurrentIPAddress(configuration, override_url=None):
         ('0.0.0.0', 0))
   else:
     raise NotImplementedError(
-        'Scheme "{}" not supported for IP address look up'.format(url.scheme))
+        'Scheme "{}" not supported for IP address look up'.format(
+            url_parts.scheme))
+
   try:
     connection.request('GET',
-                        urlparse.urlunsplit((None,
+                       urlparse.urlunsplit((None,
                                             None,
-                                            url.path,
-                                            url.query,
-                                            url.fragment)))
+                                            url_parts.path,
+                                            url_parts.query,
+                                            url_parts.fragment)))
     response = connection.getresponse()
 
     if response.status == 200:
@@ -486,7 +513,7 @@ def _QueryCurrentIPAddress(configuration, override_url=None):
       # Recursively handle redirect requests
       redirect = response.getheader('Location')
       print 'Redirecting ({}) {} to {}'.format(response.status,
-                                               url.geturl(),
+                                               url_parts.geturl(),
                                                redirect)
       return _QueryCurrentIPAddress(configuration, override_url=redirect)
     else:
@@ -559,11 +586,12 @@ def _UpdateDNSAddress(configuration, current_client_address):
 
   try:
     print 'Invoking:', request.get_full_url()
+    # authentication is now handled automatically for us
     handle = urllib2.urlopen(request)
+    # TODO parse text response and handle errors
     for line in handle:
       if line.strip():
         print 'Response:', request.get_host(), line.strip()
-    # authentication is now handled automatically for us
   except (urllib2.HTTPError, urllib2.URLError), e:
     print 'Error processing {}: {}'.format(request.get_host(), e)
 
