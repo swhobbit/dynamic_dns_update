@@ -1,0 +1,19 @@
+*<expletive>*  
+
+http://domains.google.com/checkip doesn't work as of February for IPv4 addresses from Python, which is unfortunately, given in a previous life I personally wrote the Google server side code with an eye towards writing a python client.
+
+The server code is fine, per se.  But:
+
+* Google now redirects all unencrypted (http) connections to secure (https) ones
+* Google is IPv6 enabled 
+* Dynamic DNS checking is for IPv4 (IPv6 doesn't need it)
+* Python's various libraries like urllib2 don't allow forcing IPv4 except by:
+  a) replacing the host name in URL with the IP address
+  b) adding a "Host: domains.google.com" header by hand
+* Python checks the host in the URL (not the Host header) against the SSL cert returned by the server.
+
+So the Python IPv4 workaround doesn't work when https is forced by Google because the IP address doesn't match the SSL certificate.
+
+A temporary work around is to use http://checkip.kew.com, which is a prototype of the same functionality. It was implemented in Python on Google App Engine, which doesn't force the redirect to SSL.  This is safe, but insecure.
+
+Another work around is rather than using urllib2, use python's lower level urlparse and httplib modules; these used in tandem support basic HTTP over IPv4 SSL connections, but don't automatically handle redirect or authentication.
