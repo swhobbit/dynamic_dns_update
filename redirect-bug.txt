@@ -16,4 +16,4 @@ So the Python IPv4 workaround doesn't work when https is forced by Google becaus
 
 A temporary work around is to use http://checkip.kew.com, which is a prototype of the same functionality. It was implemented in Python on Google App Engine, which doesn't force the redirect to SSL.  This is safe, but insecure.
 
-Another work around is rather than using urllib2, use python's lower level urlparse and httplib modules; these used in tandem support basic HTTP over IPv4 SSL connections, but don't automatically handle redirect or authentication.
+Another work around is rather than calling urllib2, use python's lower level urlparse and httplib modules; these used in tandem support basic HTTP over IPv4 SSL connections, but don't automatically handle redirect or authentication.

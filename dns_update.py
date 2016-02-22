@@ -3,18 +3,19 @@
 Client for Dynamic DNS updates.  Supports EasyDNS, Google, Hurricane Electrics's
 Tunnelbroker.net, and many generic services.
 '''
-__AUTHOR__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
-
-__VERSION__ = '0.9'
 
 import argparse
 import base64
+import httplib
 import pickle
 import socket
 import sys
 import time
+import urlparse
 import urllib2
 
+__AUTHOR__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
+__VERSION__ = '0.9'
 
 # Provide Server side flags
 _PASSWORD_FLAG = 'password'
@@ -62,7 +63,7 @@ class Provider(object):
 
   def __init__(self, name,
                update_url=None,
-               query_url='http://checkip.kew.com',
+               query_url='https://domains.google.com/checkip',
                enabled_flags=None,
                cache_provider_address=False):
     self.name = name
@@ -138,13 +139,13 @@ def _BuildGeneralArguments(parser, provider):
       'line when using this flag; it be must loaded from a configuration file '
       'written with the {}{} flag instead.'.format(_COMMAND_PREFIX,
                                                    _SAVE_FILE_FLAG))
-  general.add_argument('--version', 
+  general.add_argument('--version',
                        '-v',
                        help='Print the program version',
-                       action='version', 
+                       action='version',
                        version='%(prog)s by {} version {}'.format(
-                       __AUTHOR__, __VERSION__))
-                                                  
+                           __AUTHOR__, __VERSION__))
+
 
 def _BuildProviderArguments(parser, provider, is_configuration_needed):
   """Add provider server-side related switches to the command line parser."""
@@ -406,24 +407,26 @@ def _BuildCommandLineParser(args):
 
 def _SaveConfiguration(file_handle, flags):
   """Save provider flags for later retrieval by _LoadConfiguration."""
-  configuration = dict(flags)
-  del configuration[_SAVE_FILE_FLAG]
-  pickled = pickle.dumps(configuration, pickle.HIGHEST_PROTOCOL)
-  file_handle.write(base64.b32encode(pickled))
-  print 'Wrote', file_handle.name, 'with:',
+  try:
+    configuration = dict(flags)
+    del configuration[_SAVE_FILE_FLAG]
+    pickled = pickle.dumps(configuration, pickle.HIGHEST_PROTOCOL)
+    file_handle.write(base64.b32encode(pickled))
+  finally:
+    file_handle.close()
+
+  print 'Wrote', file_handle.name, 'with:'
   for flag in sorted(configuration):
-      print '\t', flag, configuration[flag]
-  file_handle.close()
+    print '\t{}\t{}'.format(flag, configuration[flag])
 
 
 def _LoadConfiguration(file_handle):
   """Load provider flags previously saved by _SaveConfiguration."""
-  pickled = base64.b32decode(file_handle.read())
-  configuration = pickle.loads(pickled)
-  file_handle.close()
-  print 'Read', file_handle.name, 'with:',
-  for flag in sorted(configuration):
-      print '\t{}\t{}'.format(flag, configuration[flag])
+  try:
+    pickled = base64.b32decode(file_handle.read())
+    configuration = pickle.loads(pickled)
+  finally:
+    file_handle.close()
   return configuration
 
 
@@ -437,22 +440,65 @@ def _GetRecordedDNSAddress(configuration):
     return None
 
 
-def _QueryCurrentIPAddress(configuration):
+def _QueryCurrentIPAddress(configuration, override_url=None):
   """Query a remote webserver to determine our possibly NATted address."""
   if _QUERY_URL_FLAG not in configuration or not configuration[_QUERY_URL_FLAG]:
     return None
 
-  # Create request object we can get the host name from, then make a new
-  # request which replaces the host name with an IPv4 address.
-  request = urllib2.Request(configuration[_QUERY_URL_FLAG])
-  if request.get_type() == 'http':
-    hostname = request.get_host()
-    ip_address = socket.gethostbyname(hostname)
-    request = urllib2.Request(request.get_full_url().replace(hostname,
-                                                             ip_address),
-                              headers={'Host':hostname})
-  handle = urllib2.urlopen(request)
-  return socket.inet_aton(handle.readline().strip())
+  url = urlparse.urlsplit(override_url or configuration[_QUERY_URL_FLAG])
+  
+  # The secret sauce for both HTTP and HTTPS below is the source address of
+  # 0.0.0.0, which implicitly forces IPv4 for the connection.
+  if url.scheme == 'http':
+    connection = httplib.HTTPConnection(
+        url.hostname,
+        url.port or httplib.HTTP_PORT,
+        True,
+        None,
+        ('0.0.0.0', 0))
+  elif url.scheme == 'https':
+    connection = httplib.HTTPSConnection(
+        url.hostname,
+        url.port or httplib.HTTPS_PORT,
+        None,
+        None,
+        True,
+        None,
+        ('0.0.0.0', 0))
+  else:
+    raise NotImplementedError(
+        'Scheme "{}" not supported for IP address look up'.format(url.scheme))
+  try:
+    connection.request('GET',
+                        urlparse.urlunsplit((None,
+                                            None,
+                                            url.path,
+                                            url.query,
+                                            url.fragment)))
+    response = connection.getresponse()
+
+    if response.status == 200:
+      # TODO: Consider parsing the line to extract IP address from servers that
+      # return extra text in the response.
+      data = response.read().strip()
+      return socket.inet_aton(data)
+    elif response.status in (301, 302, 303, 307):
+      # Recursively handle redirect requests
+      redirect = response.getheader('Location')
+      print 'Redirecting ({}) {} to {}'.format(response.status,
+                                               url.geturl(),
+                                               redirect)
+      return _QueryCurrentIPAddress(configuration, override_url=redirect)
+    else:
+      print 'Unexpected response from server: {} {}'.format(
+          response.status,
+          response.reason)
+      return None
+  except IOError, ex:
+    print 'Error retrieving current IP address: {}'.format(ex)
+    return None
+  finally:
+    connection.close()
 
 
 def _GetCurrentPublicIPAddress(configuration):
@@ -526,10 +572,10 @@ def _ProcessUpdate(configuration):
   """Perform processing to update a DNS single configuration."""
   current_client_address = _GetCurrentPublicIPAddress(configuration)
   recorded_dns_address = _GetRecordedDNSAddress(configuration)
-  zero  = '\xde\xad\xbe\xef'
+  deadbeef = '\xff\xfe\xfd\xfc'
   print 'Recorded address: {}, Current address: {}'.format(
-      socket.inet_ntoa(recorded_dns_address or zero),
-      socket.inet_ntoa(current_client_address or zero))
+      socket.inet_ntoa(recorded_dns_address or deadbeef),
+      socket.inet_ntoa(current_client_address or deadbeef))
   if (not current_client_address or
       recorded_dns_address != current_client_address):
     if (_UpdateDNSAddress(configuration, current_client_address) and
@@ -538,7 +584,7 @@ def _ProcessUpdate(configuration):
   else:
     print 'No updated needed, {} address already is {}'.format(
         configuration[_HOSTNAME_FLAG],
-        socket.inet_ntoa(recorded_dns_address or zero))
+        socket.inet_ntoa(recorded_dns_address or deadbeef))
 
 
 def _Main():
