@@ -4,6 +4,9 @@ Client for Dynamic DNS updates.  Supports EasyDNS, Google, Hurricane Electrics's
 Tunnelbroker.net, and many generic services.
 '''
 
+# pylint: disable=I0011
+
+
 import argparse
 import base64
 import httplib
@@ -15,7 +18,9 @@ import urlparse
 import urllib2
 
 __AUTHOR__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
-__VERSION__ = '0.9.1'
+__VERSION__ = '0.9.2'
+
+_USER_AGENT = 'dns_update.py by {} version {}'.format(__AUTHOR__, __VERSION__)
 
 # Provide Server side flags
 _PASSWORD_FLAG = 'password'
@@ -32,13 +37,13 @@ _BACK_MX_FLAG = 'backmx'
 _MX_FLAG = 'mx'
 _WILDCARD_FLAG = 'wildcard'
 _OFFLINE_FLAG = 'offline'
-_CACHE_PROVIDER_ADDRESS = 'cache_provider_address'
+_CACHE_PROVIDER_ADDRESS_SECONDS = 'cache_provider_address_seconds'
 _CHECK_PROVIDER_ADDRESS = 'check_provider_address'
 
 # Flags used by program itself.
 _CONFIGURATION_FILE_FLAG = 'from'
 _SAVE_FILE_FLAG = 'save'
-_DELAY_INTERVAL_FLAG = 'delay_interval'
+_POLL_INTERVAL_SECONDS_FLAG = 'poll_interval_seconds'
 
 # Not a flag, but stored in the configuration to cache it
 _CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS = '_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS'
@@ -67,7 +72,7 @@ class Provider(object):
                update_url=None,
                query_url='https://domains.google.com/checkip',
                enabled_flags=None,
-               cache_provider_address=False,
+               cache_provider_address_seconds=0,
                check_provider_address=True):
     self.name = name
     self.update_url = update_url
@@ -75,7 +80,7 @@ class Provider(object):
     # system work because it redirects to https using IPv6.
     self.query_url = query_url
     self.enabled_flags = frozenset(enabled_flags or [])
-    self.cache_provider_address = cache_provider_address
+    self.cache_provider_address_seconds = cache_provider_address_seconds
     self.check_provider_address = check_provider_address
 
 _PROVIDERS = {
@@ -90,10 +95,18 @@ _PROVIDERS = {
                      update_url='https://domains.google.com/nic/update'),
     _TUNNEL_BROKER:Provider(_TUNNEL_BROKER,
                             check_provider_address=False, # No hostname to query
-                            cache_provider_address=True,
+                            cache_provider_address_seconds=1800,
                             update_url='https://ipv4.tunnelbroker.net/'
                             'nic/update'),
 }
+
+
+def _AddrToStr(ipv4_adddress):
+  """Format an IP address as a string, allowing for it to be None"""
+  if ipv4_adddress:
+    return socket.inet_ntoa(ipv4_adddress)
+  else:
+    return '(none)'
 
 def _PreparseArguments(args):
   """Simple preliminary parse to determine how to parse full flags."""
@@ -134,7 +147,7 @@ def _BuildGeneralArguments(parser):
                        'restrictions consistent with the specified provider')
 
   general.add_argument(
-      _COMMAND_PREFIX + _DELAY_INTERVAL_FLAG,
+      _COMMAND_PREFIX + _POLL_INTERVAL_SECONDS_FLAG,
       '-i',
       type=int,
       metavar='SECONDS',
@@ -191,27 +204,22 @@ def _BuildProviderArguments(parser, provider, is_configuration_needed):
                          dest=_CHECK_PROVIDER_ADDRESS,
                          default=argparse.SUPPRESS,
                          action='store_false',
-                         help='Do not cache the current cliernt address set at '
+                         help='Do not check the current client address set at '
                          'the provider when polling.')
 
   exclusive = server.add_mutually_exclusive_group()
-  exclusive.add_argument(_COMMAND_PREFIX + _CACHE_PROVIDER_ADDRESS,
+  exclusive.add_argument(_COMMAND_PREFIX + _CACHE_PROVIDER_ADDRESS_SECONDS,
                          '-c',
-                         default=provider.cache_provider_address,
-                         action='store_true',
-                         help='When polling via the {}{}, '
-                         'remember the address currently set at the provider, '
-                         'and do not attempt to update it if the current '
-                         'client public address has '
-                         'changed.'.format(_COMMAND_PREFIX,
-                                           _DELAY_INTERVAL_FLAG))
-  exclusive.add_argument(_COMMAND_PREFIX + _NO_PREFIX + _CACHE_PROVIDER_ADDRESS,
-                         '-C',
-                         dest=_CACHE_PROVIDER_ADDRESS,
-                         default=argparse.SUPPRESS,
-                         action='store_false',
-                         help='Do not cache the current cliernt address set at '
-                         'the provider when polling.')
+                         default=provider.cache_provider_address_seconds,
+                         metavar='SECONDS',
+                         type=int,
+                         help='When polling via the {}{} flag, '
+                         'remember the address currently set at the provider '
+                         'for the specified number of seconds, '
+                         'and do not attempt to update the provider if the '
+                         'current client public address still matches '
+                         'it during this period.'.format(
+                             _COMMAND_PREFIX, _POLL_INTERVAL_SECONDS_FLAG))
 
 
 def _BuildClientArguments(parser, provider, is_configuration_needed):
@@ -256,6 +264,7 @@ def _BuildClientArguments(parser, provider, is_configuration_needed):
                            '{}'.format(provider.query_url))
     exclusive.add_argument(_COMMAND_PREFIX + _NO_PREFIX + _QUERY_URL_FLAG,
                            '-Q',
+                           dest=_QUERY_URL_FLAG,
                            default=argparse.SUPPRESS,
                            action='store_const',
                            const=None,
@@ -356,7 +365,7 @@ def _CheckRequired(args, parser):
                  'line or from a configuration file, and their values must '
                  'not be empty.'.format(
                      ', '.join([_COMMAND_PREFIX + f for f in missing])))
-    parser.exit(3)
+    parser.exit(5)
 
 
 def _CheckConflicts(args, parser):
@@ -367,16 +376,18 @@ def _CheckConflicts(args, parser):
   # check for what's valid or its default.
   if _CONFIGURATION_FILE_FLAG in flags:
     conflicts = [f for f in flags
-                 if f not in [_CONFIGURATION_FILE_FLAG, _DELAY_INTERVAL_FLAG]
+                 if f not in [_CONFIGURATION_FILE_FLAG,
+                              _POLL_INTERVAL_SECONDS_FLAG]
                  and flags[f] != parser.get_default(f)]
     if conflicts:
       parser.error('Only the {}{} flag may specified on the command line when '
                    'loading configurations from one more files.'.format(
-                       _COMMAND_PREFIX, _DELAY_INTERVAL_FLAG))
+                       _COMMAND_PREFIX, _POLL_INTERVAL_SECONDS_FLAG))
       parser.exit(3)
 
   conflict_tuples = [
-      (_DELAY_INTERVAL_FLAG, (_MYIP_FLAG, _SAVE_FILE_FLAG, _PASSWORD_FLAG)),
+      (_POLL_INTERVAL_SECONDS_FLAG,
+       (_MYIP_FLAG, _SAVE_FILE_FLAG, _PASSWORD_FLAG)),
       (_MYIP_FLAG, (_QUERY_URL_FLAG, _SAVE_FILE_FLAG)),
   ]
   for flag, others in conflict_tuples:
@@ -453,8 +464,12 @@ def _LoadConfiguration(file_handle):
 
 def _GetRecordedDNSAddress(configuration):
   """Report IPv4 address of specified hostname as known by provider."""
-  if _CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS in configuration:
-    return configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS]
+  if (_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS in configuration and
+      configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1] > time.time()):
+    print 'Using cached address value {}, cache expires at {}'.format(
+        _AddrToStr(configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][0]),
+        time.ctime(configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1]))
+    return configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][0]
   elif configuration[_CHECK_PROVIDER_ADDRESS]:
     try:
       return socket.inet_aton(socket.gethostbyname(
@@ -482,6 +497,7 @@ def _QueryCurrentIPAddress(configuration, override_url=None):
         None,
         ('0.0.0.0', 0))
   elif url_parts.scheme == 'https':
+    # pylint: disable=R0204
     connection = httplib.HTTPSConnection(
         url_parts.hostname,
         url_parts.port or httplib.HTTPS_PORT,
@@ -501,7 +517,9 @@ def _QueryCurrentIPAddress(configuration, override_url=None):
                                             None,
                                             url_parts.path,
                                             url_parts.query,
-                                            url_parts.fragment)))
+                                            url_parts.fragment)),
+                       None,
+                       {'User-Agent':_USER_AGENT})
     response = connection.getresponse()
 
     if response.status == 200:
@@ -535,6 +553,7 @@ def _GetCurrentPublicIPAddress(configuration):
   elif _QUERY_URL_FLAG in configuration:
     current_client_address = _QueryCurrentIPAddress(configuration)
   else:
+    # We're relying on the request to the server to determine the client address
     current_client_address = None
   return current_client_address
 
@@ -544,10 +563,12 @@ def _UpdateDNSAddress(configuration, current_client_address):
   parameters = []
 
   # The current client address, our reason to exist, is special because the
-  # value is not part of the configuration dictionary.
+  # value is not part of the configuration dictionary.  If it is not included,
+  # then the update server is assumed to "Do The Right Thing" by examining the
+  # connection metadata.
   if current_client_address:
     parameters.append('{}={}'.format(_MYIP_FLAG,
-                                     socket.inet_ntoa(current_client_address)))
+                                     _AddrToStr(current_client_address)))
 
   # URL Parameters with values in the configuration
   for flag in [_HOSTNAME_FLAG,
@@ -564,7 +585,7 @@ def _UpdateDNSAddress(configuration, current_client_address):
 
   request = urllib2.Request('{}?{}'.format(configuration[_UPDATE_URL_FLAG],
                                            '&'.join(parameters)),
-                            headers={'User-Agent': 'com.kew.dns_update'})
+                            headers={'User-Agent':_USER_AGENT})
 
   # Following code based on stackoverflow.com example at http://goo.gl/WJldUm
   passman = urllib2.HTTPPasswordMgrWithDefaultRealm()
@@ -588,35 +609,41 @@ def _UpdateDNSAddress(configuration, current_client_address):
     print 'Invoking:', request.get_full_url()
     # authentication is now handled automatically for us
     handle = urllib2.urlopen(request)
-    # TODO parse text response and handle errors
+    # TODO: parse text response and handle errors
     for line in handle:
       if line.strip():
         print 'Response:', request.get_host(), line.strip()
+      return True
   except (urllib2.HTTPError, urllib2.URLError), e:
     print 'Error processing {}: {}'.format(request.get_host(), e)
 
 
 def _ProcessUpdate(configuration):
   """Perform processing to update a DNS single configuration."""
-  current_client_address = _GetCurrentPublicIPAddress(configuration)
-  recorded_dns_address = _GetRecordedDNSAddress(configuration)
-  deadbeef = '\xff\xfe\xfd\xfc'
-  print 'Recorded address: {}, Current address: {}'.format(
-      socket.inet_ntoa(recorded_dns_address or deadbeef),
-      socket.inet_ntoa(current_client_address or deadbeef))
-  if (not current_client_address or
-      recorded_dns_address != current_client_address):
-    if (_UpdateDNSAddress(configuration, current_client_address) and
-        configuration[_CACHE_PROVIDER_ADDRESS]):
-      configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = recorded_dns_address
-  else:
-    print 'No updated needed, {} address already is {}'.format(
-        configuration[_HOSTNAME_FLAG],
-        socket.inet_ntoa(recorded_dns_address or deadbeef))
-
+  try:
+    current_client_address = _GetCurrentPublicIPAddress(configuration)
+    recorded_dns_address = _GetRecordedDNSAddress(configuration)
+    if (not recorded_dns_address or
+        recorded_dns_address != current_client_address):
+      print 'Recorded address: {}, Current address: {}'.format(
+          _AddrToStr(recorded_dns_address),
+          _AddrToStr(current_client_address))
+      # reset any cache entry, then perform the actual update.
+      configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
+      if _UpdateDNSAddress(configuration, current_client_address):
+        configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (
+            current_client_address,
+            time.time() + configuration[_CACHE_PROVIDER_ADDRESS_SECONDS])
+    else:
+      print 'No updated needed, {} address already is {}'.format(
+          configuration[_HOSTNAME_FLAG],
+          _AddrToStr(recorded_dns_address))
+  except IOError, ex:
+    print 'Update procesisng failed:', ex
+    configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
 
 def _Main():
-  """Main program, parse arguments and either saves or processes them."""
+  """Main program, parses arguments and either saves or processes them."""
   flags = vars(_BuildCommandLineParser(sys.argv[1:]))
 
   # we have a file to save, do so and then exit with updating any provider
@@ -636,10 +663,10 @@ def _Main():
     configurations = [flags]
 
   first_pass = True
-  while first_pass or _DELAY_INTERVAL_FLAG in flags:
+  while first_pass or _POLL_INTERVAL_SECONDS_FLAG in flags:
     first_pass = False
-    if _DELAY_INTERVAL_FLAG in flags:
-      time.sleep(flags[_DELAY_INTERVAL_FLAG])
+    if _POLL_INTERVAL_SECONDS_FLAG in flags:
+      time.sleep(flags[_POLL_INTERVAL_SECONDS_FLAG])
     for configuration in configurations:
       _ProcessUpdate(configuration)
 
