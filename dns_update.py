@@ -1,16 +1,71 @@
 #!/usr/bin/python
 '''
-Client for Dynamic DNS updates.  Supports EasyDNS, Google, Hurricane Electrics's
-Tunnelbroker.net, and many generic services.
+Client for IPv4 Dynamic DNS updates; see
+(https://en.wikipedia.org/wiki/Dynamic_DNS#DDNS_for_Internet_access_devices).
+Supports EasyDNS, Google, Hurricane Electrics's Tunnelbroker.net, and various
+other providers.
+
+For command line help:
+  Run the program with the --help flag
+
+How it works:
+
+  Given the parameters of:
+    - an update URL to connect to
+    - hostname to update
+    - username and password to authicate with
+  and optionally additional parameters:
+    - a specific IP address to update to -OR-
+    - a URL to query the client current public IP address
+
+  The program default processing is as follows:
+    - Command line arguments are processed
+    - If possible, the current client address is determined from the provided
+      source (fixed parameter or by contacting the query URL)
+    - The hostname is queried in DNS for the current address
+    - If the client address does not known or does not match the address in DNS
+      the update URL is invoked with the username, password, hostname and
+      (if available) the current client address.
+
+  The program has other modes which extend the basic processing:
+    - The program can process the command line arguments and save them in a file
+      for later retrieval and use. In the this mode (invoked by the --save
+      flag), no update is performed.
+    - The program can load the arguments previously written to one or more files
+      by the --save option. If multiple files are loaded, each configuration is
+      processed in order. This allows for example both updating a DNS entry at
+      one provider and updating an IPV6 tunnel endpoint at a second provider.
+    - When one or more configuration files are used, the program be specified
+      to run in polling mode, where rather than exiting after a single pass,
+      sleeps for a configured period and then processing all loaded
+      configurations again.
+
+  It should be noted that the program is written to both minimize update server
+  load and handle some unique edge cases:
+    - The query of the client IP address is always forced to use IPv4; this
+      avoid problems with providers (such as Google) which provide IPv6
+      connections by default.
+    - By doing a simple anonymous query for the public IP address and comparing
+      it to the current DNS address of the hostname, the server update is
+      avoided completely if the address has not changed.
+    - In some cases, the hostname has no IPV4 address in DNS (example: when
+      providing an IPv6 tunnel end point) or it may wrong (example:
+      when the updated URL is the not live DNS provider.  In such cases:
+      * the check of the hostane in DNS casn be disabled.
+      * When in polling mode, the updated record's IP address can be cached in
+        memory to avoid duplicate updates.
+
+    Other references:
+      http://support.easydns.com/tutorials/dynamicUpdateSpecs.php
+      https://support.google.com/domains/answer/6147083?hl=en
+      https://forums.he.net/index.php?topic=1994.0
 '''
-
-# pylint: disable=I0011
-
 
 import argparse
 import base64
 import httplib
 import pickle
+import re
 import socket
 import sys
 import time
@@ -18,7 +73,7 @@ import urlparse
 import urllib2
 
 __AUTHOR__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
-__VERSION__ = '0.9.2'
+__VERSION__ = '0.9.3'
 
 _USER_AGENT = 'dns_update.py by {} version {}'.format(__AUTHOR__, __VERSION__)
 
@@ -58,6 +113,9 @@ _TUNNEL_BROKER = 'tunnelbroker'
 _COMMAND_PREFIX = '--'
 _NO_PREFIX = 'no_'
 
+_ADDRESS_RE = re.compile(r'({octet}\.{octet}\.{octet}\.{octet})'.format(
+    octet=r'(25[0-5]|2[0-4]\d|[01]?\d{1,2})'))
+
 class Provider(object):
   """Holder for provider specific metadata."""
   generic_optional_flags = frozenset([
@@ -95,6 +153,7 @@ _PROVIDERS = {
                      update_url='https://domains.google.com/nic/update'),
     _TUNNEL_BROKER:Provider(_TUNNEL_BROKER,
                             check_provider_address=False, # No hostname to query
+                            query_url='http://checkip.dns.he.net/',
                             cache_provider_address_seconds=1800,
                             update_url='https://ipv4.tunnelbroker.net/'
                             'nic/update'),
@@ -464,8 +523,7 @@ def _LoadConfiguration(file_handle):
 
 def _GetRecordedDNSAddress(configuration):
   """Report IPv4 address of specified hostname as known by provider."""
-  if (_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS in configuration and
-      configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1] > time.time()):
+  if configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1] > time.time():
     print 'Using cached address value {}, cache expires at {}'.format(
         _AddrToStr(configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][0]),
         time.ctime(configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1]))
@@ -479,6 +537,7 @@ def _GetRecordedDNSAddress(configuration):
   else:
     # checking not enabled.
     return None
+
 
 def _QueryCurrentIPAddress(configuration, override_url=None):
   """Query a remote webserver to determine our possibly NATted address."""
@@ -523,10 +582,14 @@ def _QueryCurrentIPAddress(configuration, override_url=None):
     response = connection.getresponse()
 
     if response.status == 200:
-      # TODO: Consider parsing the line to extract IP address from servers that
-      # return extra text in the response.
-      data = response.read().strip()
-      return socket.inet_aton(data)
+      data = response.read()
+      match = _ADDRESS_RE.search(data)
+      if match:
+        return socket.inet_aton(match.group(0))
+      else:
+        print 'No IP address returned by {}: {} ...'.format(url_parts.geturl(),
+                                                        data[:50])
+        return None
     elif response.status in (301, 302, 303, 307):
       # Recursively handle redirect requests
       redirect = response.getheader('Location')
@@ -535,23 +598,30 @@ def _QueryCurrentIPAddress(configuration, override_url=None):
                                                redirect)
       return _QueryCurrentIPAddress(configuration, override_url=redirect)
     else:
-      print 'Unexpected response from server: {} {}'.format(
-          response.status,
-          response.reason)
-      return None
+      raise urllib2.HTTPError(url_parts.geturl(),
+                              response.status,
+                              response.reason,
+                              response.getheaders(),
+                              response.fp)
   except IOError, ex:
     print 'Error retrieving current IP address: {}'.format(ex)
-    return None
+    raise
   finally:
     connection.close()
 
 
-def _GetCurrentPublicIPAddress(configuration):
+def _GetCurrentPublicIPAddress(configuration, client_query_cache):
   """Determine the current public client address to send to the provider"""
   if _MYIP_FLAG in configuration:
     current_client_address = configuration[_MYIP_FLAG]
   elif _QUERY_URL_FLAG in configuration:
-    current_client_address = _QueryCurrentIPAddress(configuration)
+    query_url = configuration[_QUERY_URL_FLAG]
+    if query_url in client_query_cache:
+      current_client_address = client_query_cache[query_url]
+    else:
+      current_client_address = _QueryCurrentIPAddress(configuration)
+      if current_client_address:
+        client_query_cache[query_url] = current_client_address
   else:
     # We're relying on the request to the server to determine the client address
     current_client_address = None
@@ -618,10 +688,11 @@ def _UpdateDNSAddress(configuration, current_client_address):
     print 'Error processing {}: {}'.format(request.get_host(), e)
 
 
-def _ProcessUpdate(configuration):
+def _ProcessUpdate(configuration, client_query_cache):
   """Perform processing to update a DNS single configuration."""
   try:
-    current_client_address = _GetCurrentPublicIPAddress(configuration)
+    current_client_address = _GetCurrentPublicIPAddress(configuration,
+                                                        client_query_cache)
     recorded_dns_address = _GetRecordedDNSAddress(configuration)
     if (not recorded_dns_address or
         recorded_dns_address != current_client_address):
@@ -635,9 +706,10 @@ def _ProcessUpdate(configuration):
             current_client_address,
             time.time() + configuration[_CACHE_PROVIDER_ADDRESS_SECONDS])
     else:
-      print 'No updated needed, {} address already is {}'.format(
+      print 'No update needed, {} address already is {} (client is {}'.format(
           configuration[_HOSTNAME_FLAG],
-          _AddrToStr(recorded_dns_address))
+          _AddrToStr(recorded_dns_address),
+          _AddrToStr(current_client_address))
   except IOError, ex:
     print 'Update procesisng failed:', ex
     configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
@@ -662,13 +734,19 @@ def _Main():
   if not configurations:
     configurations = [flags]
 
+  # Initialize empty and expired provider cache information
+  for configuration in configurations:
+    configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
+
   first_pass = True
   while first_pass or _POLL_INTERVAL_SECONDS_FLAG in flags:
-    first_pass = False
+    # new client address cache every processing pass
+    client_query_cache = {}
+    for configuration in configurations:
+      _ProcessUpdate(configuration, client_query_cache)
     if _POLL_INTERVAL_SECONDS_FLAG in flags:
       time.sleep(flags[_POLL_INTERVAL_SECONDS_FLAG])
-    for configuration in configurations:
-      _ProcessUpdate(configuration)
+    first_pass = False
 
 if __name__ == '__main__':
   _Main()
