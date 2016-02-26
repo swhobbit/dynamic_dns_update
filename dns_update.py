@@ -64,6 +64,9 @@ How it works:
 import argparse
 import base64
 import httplib
+import logging
+import logging.handlers
+import os.path
 import pickle
 import re
 import socket
@@ -72,12 +75,14 @@ import time
 import urlparse
 import urllib2
 
-__AUTHOR__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
-__VERSION__ = '0.9.3'
+__author__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
+__version__ = '0.9.4'
 
-_USER_AGENT = 'dns_update.py by {} version {}'.format(__AUTHOR__, __VERSION__)
+_USER_AGENT = '{} by {} version {}'.format(os.path.basename(__file__),
+                                           __author__,
+                                           __version__)
 
-# Provide Server side flags
+# Provider Server side flags
 _PASSWORD_FLAG = 'password'
 _USERNAME_FLAG = 'username'
 _PROVIDER_NAME_FLAG = 'provider'
@@ -115,6 +120,8 @@ _NO_PREFIX = 'no_'
 
 _ADDRESS_RE = re.compile(r'({octet}\.{octet}\.{octet}\.{octet})'.format(
     octet=r'(25[0-5]|2[0-4]\d|[01]?\d{1,2})'))
+
+_logger = None
 
 class Provider(object):
   """Holder for provider specific metadata."""
@@ -195,7 +202,7 @@ def _BuildGeneralArguments(parser):
                        help='Print the program version',
                        action='version',
                        version='%(prog)s by {} version {}'.format(
-                           __AUTHOR__, __VERSION__))
+                           __author__, __version__))
 
   general.add_argument(_COMMAND_PREFIX + _PROVIDER_NAME_FLAG,
                        '-P',
@@ -506,9 +513,9 @@ def _SaveConfiguration(file_handle, flags):
   finally:
     file_handle.close()
 
-  print 'Wrote', file_handle.name, 'with:'
+  _logger.debug('Wrote', file_handle.name, 'with:')
   for flag in sorted(configuration):
-    print '\t{}\t{}'.format(flag, configuration[flag])
+    _logger.debug('\t{}\t{}'.format(flag, configuration[flag]))
 
 
 def _LoadConfiguration(file_handle):
@@ -524,9 +531,9 @@ def _LoadConfiguration(file_handle):
 def _GetRecordedDNSAddress(configuration):
   """Report IPv4 address of specified hostname as known by provider."""
   if configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1] > time.time():
-    print 'Using cached address value {}, cache expires at {}'.format(
+    _logger.debug('Using cached address value {}, cache expires at {}'.format(
         _AddrToStr(configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][0]),
-        time.ctime(configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1]))
+        time.ctime(configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1])))
     return configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][0]
   elif configuration[_CHECK_PROVIDER_ADDRESS]:
     try:
@@ -587,15 +594,16 @@ def _QueryCurrentIPAddress(configuration, override_url=None):
       if match:
         return socket.inet_aton(match.group(0))
       else:
-        print 'No IP address returned by {}: {} ...'.format(url_parts.geturl(),
-                                                        data[:50])
+        _logger.error('No IP address returned by {}: {} ...'.format(
+            url_parts.geturl(),
+            data[:50]))
         return None
     elif response.status in (301, 302, 303, 307):
       # Recursively handle redirect requests
       redirect = response.getheader('Location')
-      print 'Redirecting ({}) {} to {}'.format(response.status,
-                                               url_parts.geturl(),
-                                               redirect)
+      _logger.debug('Redirecting ({}) {} to {}'.format(response.status,
+                                                       url_parts.geturl(),
+                                                       redirect))
       return _QueryCurrentIPAddress(configuration, override_url=redirect)
     else:
       raise urllib2.HTTPError(url_parts.geturl(),
@@ -604,7 +612,7 @@ def _QueryCurrentIPAddress(configuration, override_url=None):
                               response.getheaders(),
                               response.fp)
   except IOError, ex:
-    print 'Error retrieving current IP address: {}'.format(ex)
+    _logger.warn('Error retrieving current IP address: {}'.format(ex))
     raise
   finally:
     connection.close()
@@ -676,29 +684,32 @@ def _UpdateDNSAddress(configuration, current_client_address):
   # You must (of course) use it when fetching the page though.
 
   try:
-    print 'Invoking:', request.get_full_url()
+    _logger.debug('Invoking:', request.get_full_url())
     # authentication is now handled automatically for us
     handle = urllib2.urlopen(request)
     # TODO: parse text response and handle errors
     for line in handle:
       if line.strip():
-        print 'Response:', request.get_host(), line.strip()
+        _logger.debug('Response:', request.get_host(), line.strip())
       return True
-  except (urllib2.HTTPError, urllib2.URLError), e:
-    print 'Error processing {}: {}'.format(request.get_host(), e)
+  except (urllib2.HTTPError, urllib2.URLError), ex:
+    _logger.error('Error processing {}: {}'.format(request.get_full_url(), ex))
 
 
 def _ProcessUpdate(configuration, client_query_cache):
   """Perform processing to update a DNS single configuration."""
+  hostname = configuration[_HOSTNAME_FLAG]
   try:
     current_client_address = _GetCurrentPublicIPAddress(configuration,
                                                         client_query_cache)
     recorded_dns_address = _GetRecordedDNSAddress(configuration)
     if (not recorded_dns_address or
         recorded_dns_address != current_client_address):
-      print 'Recorded address: {}, Current address: {}'.format(
-          _AddrToStr(recorded_dns_address),
-          _AddrToStr(current_client_address))
+      _logger.info(
+          'Old address {} for {} will be updated to address {}'.format(
+              _AddrToStr(recorded_dns_address),
+              hostname,
+              _AddrToStr(current_client_address)))
       # reset any cache entry, then perform the actual update.
       configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
       if _UpdateDNSAddress(configuration, current_client_address):
@@ -706,16 +717,58 @@ def _ProcessUpdate(configuration, client_query_cache):
             current_client_address,
             time.time() + configuration[_CACHE_PROVIDER_ADDRESS_SECONDS])
     else:
-      print 'No update needed, {} address already is {} (client is {}'.format(
-          configuration[_HOSTNAME_FLAG],
-          _AddrToStr(recorded_dns_address),
-          _AddrToStr(current_client_address))
+      _logger.info(
+          'No update needed for {}, address is {} (client is {})'.format(
+              hostname,
+              _AddrToStr(recorded_dns_address),
+              _AddrToStr(current_client_address)))
   except IOError, ex:
-    print 'Update procesisng failed:', ex
+    _logger.error('Update processing for {} failed: {}'.format(
+        hostname,
+        ex))
     configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
+
+def _InitializeLogging():
+  """Setting logging for console and system log."""
+  logger = logging.getLogger(__file__)
+  logger.setLevel(logging.DEBUG)
+
+  datefmt = '%m-%d %H:%M:%S '
+  short_format = ('%(processName)s[%(process)d] %(module)s-%(levelname)s '
+      '%(message)s')
+  full_format = '%(asctime)s' + short_format
+
+  console_handler = logging.StreamHandler()
+  formatter = logging.Formatter(fmt=full_format, datefmt=datefmt)
+  console_handler.setFormatter(formatter)
+  console_handler.setLevel(logging.DEBUG)
+  logger.addHandler(console_handler)
+
+  address = ('localhost', logging.handlers.SYSLOG_UDP_PORT)
+  for path in ['/var/run/syslog', # Mac OS X
+               '/dev/log',        # Linux
+               '/var/run/log']:   # FreeBSD
+    if os.path.exists(path):
+      address = path
+      break
+
+  syslog_handler = logging.handlers.SysLogHandler(
+      address=address,
+      facility=logging.handlers.SysLogHandler.LOG_DAEMON)
+  syslog_handler.setFormatter(logging.Formatter(fmt=short_format))
+  syslog_handler.setLevel(logging.DEBUG)
+  logger.addHandler(syslog_handler)
+  logger.info('Logging now enabled, syslog uses {}'.format(address))
+  print 'Log level is' , logger.getEffectiveLevel()
+  
+  return logger
+
 
 def _Main():
   """Main program, parses arguments and either saves or processes them."""
+
+  global _logger
+  _logger = _InitializeLogging()
   flags = vars(_BuildCommandLineParser(sys.argv[1:]))
 
   # we have a file to save, do so and then exit with updating any provider
