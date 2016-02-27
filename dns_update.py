@@ -130,7 +130,6 @@ class Provider(object):
       _MX_FLAG,
       _BACK_MX_FLAG,
       _TLD_FLAG,
-      _QUERY_URL_FLAG,
   ])
 
   def __init__(self, name,
@@ -156,7 +155,6 @@ _PROVIDERS = {
                       update_url='https://members.easydns.com/dyn/dyndns.php',
                       enabled_flags=Provider.generic_optional_flags),
     _GOOGLE:Provider(_GOOGLE,
-                     enabled_flags=[_QUERY_URL_FLAG],
                      update_url='https://domains.google.com/nic/update'),
     _TUNNEL_BROKER:Provider(_TUNNEL_BROKER,
                             check_provider_address=False, # No hostname to query
@@ -318,24 +316,23 @@ def _BuildClientArguments(parser, provider, is_configuration_needed):
                          help='Set this host to a provider dependent offline '
                          ' status ')
 
-  if _QUERY_URL_FLAG in provider.enabled_flags:
-    exclusive = client.add_mutually_exclusive_group()
-    exclusive.add_argument(_COMMAND_PREFIX + _QUERY_URL_FLAG,
-                           '-q',
-                           default=provider.query_url,
-                           metavar='URL',
-                           help='URL which returns the current IPv4 address '
-                           'of the client. '
-                           'The default query URL is '
-                           '{}'.format(provider.query_url))
-    exclusive.add_argument(_COMMAND_PREFIX + _NO_PREFIX + _QUERY_URL_FLAG,
-                           '-Q',
-                           dest=_QUERY_URL_FLAG,
-                           default=argparse.SUPPRESS,
-                           action='store_const',
-                           const=None,
-                           help='Do not query the current address of the host '
-                           'before updating')
+  exclusive = client.add_mutually_exclusive_group()
+  exclusive.add_argument(_COMMAND_PREFIX + _QUERY_URL_FLAG,
+                         '-q',
+                         default=provider.query_url,
+                         metavar='URL',
+                         help='URL which returns the current IPv4 address '
+                         'of the client. '
+                         'The default query URL is '
+                         '{}'.format(provider.query_url))
+  exclusive.add_argument(_COMMAND_PREFIX + _NO_PREFIX + _QUERY_URL_FLAG,
+                         '-Q',
+                         dest=_QUERY_URL_FLAG,
+                         default=argparse.SUPPRESS,
+                         action='store_const',
+                         const=None,
+                         help='Do not query the current address of the host '
+                         'before updating')
 
   if _TLD_FLAG in provider.enabled_flags:
     client.add_argument(_COMMAND_PREFIX + _TLD_FLAG,
@@ -516,7 +513,7 @@ def _SaveConfiguration(file_handle, flags):
   finally:
     file_handle.close()
 
-  _logger.debug('Wrote {} with:'.format('with:'))
+  _logger.debug('Wrote {} with:'.format(flags[_SAVE_FILE_FLAG].name))
   for flag in sorted(configuration):
     _logger.debug('\t{}\t{}'.format(flag, configuration[flag]))
 
@@ -549,7 +546,8 @@ def _GetRecordedDNSAddress(configuration):
     return None
 
 
-def _QueryCurrentIPAddress(configuration, override_url=None,
+def _QueryCurrentIPAddress(configuration,
+                           override_url=None,
                            level=logging.DEBUG):
   """Query a remote webserver to determine our possibly NATted address."""
   if _QUERY_URL_FLAG not in configuration or not configuration[_QUERY_URL_FLAG]:
@@ -634,7 +632,7 @@ def _GetCurrentPublicIPAddress(configuration,
   """Determine the current public client address to send to the provider"""
   if _MYIP_FLAG in configuration:
     current_client_address = configuration[_MYIP_FLAG]
-  elif _QUERY_URL_FLAG in configuration:
+  elif configuration[_QUERY_URL_FLAG]:
     query_url = configuration[_QUERY_URL_FLAG]
     if query_url in client_query_cache:
       current_client_address = client_query_cache[query_url]
