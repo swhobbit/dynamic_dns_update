@@ -509,11 +509,14 @@ def _SaveConfiguration(file_handle, flags):
     configuration = dict(flags)
     del configuration[_SAVE_FILE_FLAG]
     pickled = pickle.dumps(configuration, pickle.HIGHEST_PROTOCOL)
+    # We use b32 encoding as a slightly less obfuscation than base 64.  This
+    # does nothing more than accidently leaking a password to an honest person;
+    # it makes no real attempt to hide information from prying eyes.
     file_handle.write(base64.b32encode(pickled))
   finally:
     file_handle.close()
 
-  _logger.debug('Wrote', file_handle.name, 'with:')
+  _logger.debug('Wrote {} with:'.format('with:'))
   for flag in sorted(configuration):
     _logger.debug('\t{}\t{}'.format(flag, configuration[flag]))
 
@@ -546,7 +549,8 @@ def _GetRecordedDNSAddress(configuration):
     return None
 
 
-def _QueryCurrentIPAddress(configuration, override_url=None):
+def _QueryCurrentIPAddress(configuration, override_url=None,
+                           level=logging.DEBUG):
   """Query a remote webserver to determine our possibly NATted address."""
   if _QUERY_URL_FLAG not in configuration or not configuration[_QUERY_URL_FLAG]:
     return None
@@ -592,6 +596,10 @@ def _QueryCurrentIPAddress(configuration, override_url=None):
       data = response.read()
       match = _ADDRESS_RE.search(data)
       if match:
+        _logger.log(level,
+                   '{} reports client public address as {}'.format(
+                      url_parts.geturl(),
+                      match.group(0)))
         return socket.inet_aton(match.group(0))
       else:
         _logger.error('No IP address returned by {}: {} ...'.format(
@@ -601,10 +609,12 @@ def _QueryCurrentIPAddress(configuration, override_url=None):
     elif response.status in (301, 302, 303, 307):
       # Recursively handle redirect requests
       redirect = response.getheader('Location')
-      _logger.debug('Redirecting ({}) {} to {}'.format(response.status,
-                                                       url_parts.geturl(),
-                                                       redirect))
-      return _QueryCurrentIPAddress(configuration, override_url=redirect)
+      _logger.log(level, 'Redirecting ({}) {} to {}'.format(response.status,
+                                                            url_parts.geturl(),
+                                                            redirect))
+      return _QueryCurrentIPAddress(configuration,
+                                    override_url=redirect,
+                                    level=level)
     else:
       raise urllib2.HTTPError(url_parts.geturl(),
                               response.status,
@@ -618,7 +628,9 @@ def _QueryCurrentIPAddress(configuration, override_url=None):
     connection.close()
 
 
-def _GetCurrentPublicIPAddress(configuration, client_query_cache):
+def _GetCurrentPublicIPAddress(configuration,
+                               client_query_cache,
+                               level=logging.DEBUG):
   """Determine the current public client address to send to the provider"""
   if _MYIP_FLAG in configuration:
     current_client_address = configuration[_MYIP_FLAG]
@@ -627,7 +639,8 @@ def _GetCurrentPublicIPAddress(configuration, client_query_cache):
     if query_url in client_query_cache:
       current_client_address = client_query_cache[query_url]
     else:
-      current_client_address = _QueryCurrentIPAddress(configuration)
+      current_client_address = _QueryCurrentIPAddress(configuration,
+                                                      level=level)
       if current_client_address:
         client_query_cache[query_url] = current_client_address
   else:
@@ -636,7 +649,9 @@ def _GetCurrentPublicIPAddress(configuration, client_query_cache):
   return current_client_address
 
 
-def _UpdateDNSAddress(configuration, current_client_address):
+def _UpdateDNSAddress(configuration,
+                      current_client_address,
+                      level=logging.DEBUG):
   """Update the providers address for our client."""
   parameters = []
 
@@ -684,24 +699,27 @@ def _UpdateDNSAddress(configuration, current_client_address):
   # You must (of course) use it when fetching the page though.
 
   try:
-    _logger.debug('Invoking:', request.get_full_url())
+    _logger.log(level, 'Invoking: {}'.format(request.get_full_url()))
     # authentication is now handled automatically for us
     handle = urllib2.urlopen(request)
     # TODO: parse text response and handle errors
     for line in handle:
       if line.strip():
-        _logger.debug('Response:', request.get_host(), line.strip())
+        _logger.log(level, 'Response from {}: {}'.format(request.get_host(),
+                                                         line.strip()))
       return True
   except (urllib2.HTTPError, urllib2.URLError), ex:
     _logger.error('Error processing {}: {}'.format(request.get_full_url(), ex))
+    raise ex
 
 
-def _ProcessUpdate(configuration, client_query_cache):
+def _ProcessUpdate(configuration, client_query_cache, level=logging.DEBUG):
   """Perform processing to update a DNS single configuration."""
   hostname = configuration[_HOSTNAME_FLAG]
   try:
     current_client_address = _GetCurrentPublicIPAddress(configuration,
-                                                        client_query_cache)
+                                                        client_query_cache,
+                                                        level=level)
     recorded_dns_address = _GetRecordedDNSAddress(configuration)
     if (not recorded_dns_address or
         recorded_dns_address != current_client_address):
@@ -717,7 +735,7 @@ def _ProcessUpdate(configuration, client_query_cache):
             current_client_address,
             time.time() + configuration[_CACHE_PROVIDER_ADDRESS_SECONDS])
     else:
-      _logger.info(
+      _logger.log(level,
           'No update needed for {}, address is {} (client is {})'.format(
               hostname,
               _AddrToStr(recorded_dns_address),
@@ -758,9 +776,7 @@ def _InitializeLogging():
   syslog_handler.setFormatter(logging.Formatter(fmt=short_format))
   syslog_handler.setLevel(logging.DEBUG)
   logger.addHandler(syslog_handler)
-  logger.info('Logging now enabled, syslog uses {}'.format(address))
-  print 'Log level is' , logger.getEffectiveLevel()
-  
+
   return logger
 
 
@@ -792,14 +808,17 @@ def _Main():
     configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
 
   first_pass = True
+  log_level = logging.INFO
   while first_pass or _POLL_INTERVAL_SECONDS_FLAG in flags:
     # new client address cache every processing pass
     client_query_cache = {}
     for configuration in configurations:
-      _ProcessUpdate(configuration, client_query_cache)
+      _ProcessUpdate(configuration, client_query_cache, level=log_level)
     if _POLL_INTERVAL_SECONDS_FLAG in flags:
       time.sleep(flags[_POLL_INTERVAL_SECONDS_FLAG])
     first_pass = False
+    # Report less after first pass
+    log_level = logging.DEBUG
 
 if __name__ == '__main__':
   _Main()

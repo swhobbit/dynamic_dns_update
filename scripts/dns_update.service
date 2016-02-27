@@ -1,0 +1,6 @@
+[Service]
+type=simple
+ExecStart=/usr/local/sbin/dns_update.py /etc/dhcp/ursula.conf /etc/dhcp/tunnel.conf
+WantedBy=multi-user.target
+User=dnsupdte
+StandardOutput=console
