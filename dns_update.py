@@ -56,7 +56,7 @@ How it works:
         memory to avoid duplicate updates.
 
     Other references:
-      http://support.easydns.com/tutorials/dynamicUpdateSpecs.php
+      https://support.easydns.com/tutorials/dynamicUpdateSpecs.php
       https://support.google.com/domains/answer/6147083?hl=en
       https://forums.he.net/index.php?topic=1994.0
 '''
@@ -595,9 +595,9 @@ def _QueryCurrentIPAddress(configuration,
       match = _ADDRESS_RE.search(data)
       if match:
         _logger.log(level,
-                   '{} reports client public address as {}'.format(
-                      url_parts.geturl(),
-                      match.group(0)))
+                    '{} reports client public address as {}'.format(
+                        url_parts.geturl(),
+                        match.group(0)))
         return socket.inet_aton(match.group(0))
       else:
         _logger.error('No IP address returned by {}: {} ...'.format(
@@ -702,9 +702,26 @@ def _UpdateDNSAddress(configuration,
     handle = urllib2.urlopen(request)
     # TODO: parse text response and handle errors
     for line in handle:
-      if line.strip():
-        _logger.log(level, 'Response from {}: {}'.format(request.get_host(),
-                                                         line.strip()))
+      line = line.strip()
+      if line:
+        token = line.split()
+        if token[0] in ['good', 'nochg']:
+          _logger.log(level, 'Success response "{}" from {} for host {}'.format(
+              token[0],
+              request.get_host(),
+              configuration[_HOSTNAME_FLAG]))
+        else:
+          _logger.log(level,
+                      'ERROR response "{}" from {} for host {}: {}'.format(
+                          token[0],
+                          request.get_host(),
+                          configuration[_HOSTNAME_FLAG],
+                          line))
+          raise IOError('{} update via {} failed: {}'.format(
+              configuration[_HOSTNAME_FLAG],
+              request.get_host(),
+              line))
+
       return True
   except (urllib2.HTTPError, urllib2.URLError), ex:
     _logger.error('Error processing {}: {}'.format(request.get_full_url(), ex))
@@ -728,12 +745,13 @@ def _ProcessUpdate(configuration, client_query_cache, level=logging.DEBUG):
               _AddrToStr(current_client_address)))
       # reset any cache entry, then perform the actual update.
       configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
-      if _UpdateDNSAddress(configuration, current_client_address):
+      if _UpdateDNSAddress(configuration, current_client_address, level=level):
         configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (
             current_client_address,
             time.time() + configuration[_CACHE_PROVIDER_ADDRESS_SECONDS])
     else:
-      _logger.log(level,
+      _logger.log(
+          level,
           'No update needed for {}, address is {} (client is {})'.format(
               hostname,
               _AddrToStr(recorded_dns_address),
@@ -750,8 +768,8 @@ def _InitializeLogging():
   logger.setLevel(logging.DEBUG)
 
   datefmt = '%m-%d %H:%M:%S '
-  short_format = ('%(processName)s[%(process)d] %(module)s-%(levelname)s '
-      '%(message)s')
+  short_format = '{}[%(process)d] %(module)s-%(levelname)s %(message)s'.format(
+      os.path.basename(__file__))
   full_format = '%(asctime)s' + short_format
 
   console_handler = logging.StreamHandler()
