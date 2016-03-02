@@ -1,6 +1,12 @@
+[Unit]
+Description=Dynanmic DNS Update
+After=systemd-networkd.service network.service
+
 [Service]
-type=simple
-ExecStart=/usr/local/sbin/dns_update.py /etc/dhcp/ursula.conf /etc/dhcp/tunnel.conf
+Type=simple
+User=dynupdte
+ExecStart=/usr/local/sbin/dns_update.py -i 60 /etc/dhcp/ursula.conf /etc/dhcp/tunnel.conf
+StandardOutput=null
+
+[Install]
 WantedBy=multi-user.target
-User=dnsupdte
-StandardOutput=console
