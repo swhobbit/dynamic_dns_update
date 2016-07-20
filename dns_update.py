@@ -59,6 +59,8 @@ How it works:
       https://support.easydns.com/tutorials/dynamicUpdateSpecs.php
       https://support.google.com/domains/answer/6147083?hl=en
       https://forums.he.net/index.php?topic=1994.0
+
+    This program requires Python 2.7.
 '''
 
 import argparse
@@ -74,6 +76,19 @@ import sys
 import time
 import urlparse
 import urllib2
+
+# NOTE    NOTE    NOTE
+# In broard terms, this source is in three parts, which would normally be three
+# or more files:
+#
+# - utility routines
+# - configuration routines
+# - processing routines
+#
+# However, as a goal of this program was to allow installing bare on a new
+# system without the use of an external install, all the routines are in this
+# single source file.
+
 
 __author__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
 __version__ = '0.9.4'
@@ -105,7 +120,8 @@ _CONFIGURATION_FILE_FLAG = 'from'
 _SAVE_FILE_FLAG = 'save'
 _POLL_INTERVAL_SECONDS_FLAG = 'poll_interval_seconds'
 
-# Not a flag, but stored in the configuration to cache it
+# Not a flag, but stored as part the in-memory copy of configuration map to
+# cache it
 _CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS = '_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS'
 
 # Providers
@@ -124,7 +140,7 @@ _ADDRESS_RE = re.compile(r'({octet}\.{octet}\.{octet}\.{octet})'.format(
 _logger = None
 
 class Provider(object):
-  """Holder for provider specific metadata."""
+  '''Holder for provider specific metadata.'''
   generic_optional_flags = frozenset([
       _WILDCARD_FLAG,
       _MX_FLAG,
@@ -164,16 +180,37 @@ _PROVIDERS = {
                             'nic/update'),
 }
 
+#
+#  UTILITY ROUTINES
+#
 
 def _AddrToStr(ipv4_adddress):
-  """Format an IP address as a string, allowing for it to be None"""
+  '''Format an IP address as a string, allowing for it to be (none)
+
+  Args:
+    ipv4_adddress Address to format.  Maybe None.
+
+  Returns:
+    If the input is None, returns '(none)', else the address formatted as a
+    string.
+  '''
   if ipv4_adddress:
     return socket.inet_ntoa(ipv4_adddress)
   else:
     return '(none)'
 
 def _PreparseArguments(args):
-  """Simple preliminary parse to determine how to parse full flags."""
+  '''Simple preliminary parse to determine how to parse full flags.
+
+  Args:
+    Command line arguments.
+
+  Returns:
+    tuple with:
+    - default provider to base full parsing on
+    - whether or not full configuration is needed (that is, that NO
+      configuration files) were specififed on the command line
+  '''
   preparser = argparse.ArgumentParser(
       description='Dynamic DNS client provider',
       add_help=False)
@@ -193,7 +230,7 @@ def _PreparseArguments(args):
   return (provider, is_configuration_needed)
 
 def _BuildGeneralArguments(parser):
-  """Add general program related switches to the command line parser."""
+  '''Add general program related switches to the command line parser.'''
   general = parser.add_argument_group('General', 'General Program flags')
   general.add_argument('--version',
                        '-v',
@@ -227,7 +264,7 @@ def _BuildGeneralArguments(parser):
 
 
 def _BuildProviderArguments(parser, provider, is_configuration_needed):
-  """Add provider server-side related switches to the command line parser."""
+  '''Add provider server-side related switches to the command line parser.'''
 
   url_required = is_configuration_needed and not provider.update_url
   url_default = provider.update_url or argparse.SUPPRESS
@@ -287,7 +324,7 @@ def _BuildProviderArguments(parser, provider, is_configuration_needed):
 
 
 def _BuildClientArguments(parser, provider, is_configuration_needed):
-  """Add client-side configration switches to the command line parser."""
+  '''Add client-side configration switches to the command line parser.'''
 
   # Client configuration flags
   client = parser.add_argument_group('Client', 'Client specification flags')
@@ -386,7 +423,7 @@ def _BuildClientArguments(parser, provider, is_configuration_needed):
 
 
 def _BuildFileArguments(parser, filetype=None):
-  """Add file related switches to the command line parser."""
+  '''Add file related switches to the command line parser.'''
   persistence = parser.add_argument_group('Persistance',
                                           'File save/load flags')
 
@@ -416,7 +453,7 @@ def _BuildFileArguments(parser, filetype=None):
 
 
 def _CheckRequired(args, parser):
-  """Verify all required argumewnts are specified."""
+  '''Verify all required arguments are specified.'''
   flags = vars(args)
   if _CONFIGURATION_FILE_FLAG in flags:
     return
@@ -432,7 +469,7 @@ def _CheckRequired(args, parser):
 
 
 def _CheckConflicts(args, parser):
-  """Check conflicting options have not specified."""
+  '''Check conflicting options have been not specified.'''
   flags = vars(args)
 
   # Almost everything conflicts with loading configuration files, so we only
@@ -469,11 +506,11 @@ def _CheckConflicts(args, parser):
 
 
 def _BuildCommandLineParser(args):
-  """Build up the flags for parsing the command line flags.
+  '''Build up the flags for parsing the command line flags.
 
   Returns:
     ArgumentParser with all valid (possibly conflicting flags)
-  """
+  '''
   # examine command line for arguments which affect other arguments
   (provider_name, is_configuration_needed) = _PreparseArguments(args)
   provider = _PROVIDERS[provider_name]
@@ -501,7 +538,7 @@ def _BuildCommandLineParser(args):
 
 
 def _SaveConfiguration(file_handle, flags):
-  """Save provider flags for later retrieval by _LoadConfiguration."""
+  '''Save provider flags for later retrieval by _LoadConfiguration.'''
   try:
     configuration = dict(flags)
     del configuration[_SAVE_FILE_FLAG]
@@ -519,7 +556,7 @@ def _SaveConfiguration(file_handle, flags):
 
 
 def _LoadConfiguration(file_handle):
-  """Load provider flags previously saved by _SaveConfiguration."""
+  '''Load provider flags previously saved by _SaveConfiguration.'''
   try:
     pickled = base64.b32decode(file_handle.read())
     configuration = pickle.loads(pickled)
@@ -529,7 +566,7 @@ def _LoadConfiguration(file_handle):
 
 
 def _GetRecordedDNSAddress(configuration):
-  """Report IPv4 address of specified hostname as known by provider."""
+  '''Report IPv4 address of specified hostname as known by provider.'''
   if configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1] > time.time():
     _logger.debug('Using cached address value {}, cache expires at {}'.format(
         _AddrToStr(configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][0]),
@@ -549,7 +586,7 @@ def _GetRecordedDNSAddress(configuration):
 def _QueryCurrentIPAddress(configuration,
                            override_url=None,
                            level=logging.DEBUG):
-  """Query a remote webserver to determine our possibly NATted address."""
+  '''Query a remote webserver to determine our possibly NATted address.'''
   if _QUERY_URL_FLAG not in configuration or not configuration[_QUERY_URL_FLAG]:
     return None
 
@@ -629,7 +666,7 @@ def _QueryCurrentIPAddress(configuration,
 def _GetCurrentPublicIPAddress(configuration,
                                client_query_cache,
                                level=logging.DEBUG):
-  """Determine the current public client address to send to the provider"""
+  '''Determine the current public client address to send to the provider'''
   if _MYIP_FLAG in configuration:
     current_client_address = configuration[_MYIP_FLAG]
   elif configuration[_QUERY_URL_FLAG]:
@@ -650,7 +687,7 @@ def _GetCurrentPublicIPAddress(configuration,
 def _UpdateDNSAddress(configuration,
                       current_client_address,
                       level=logging.DEBUG):
-  """Update the providers address for our client."""
+  '''Update the providers address for our client.'''
   parameters = []
 
   # The current client address, our reason to exist, is special because the
@@ -729,7 +766,7 @@ def _UpdateDNSAddress(configuration,
 
 
 def _ProcessUpdate(configuration, client_query_cache, level=logging.DEBUG):
-  """Perform processing to update a DNS single configuration."""
+  '''Perform processing to update a DNS single configuration.'''
   hostname = configuration[_HOSTNAME_FLAG]
   try:
     current_client_address = _GetCurrentPublicIPAddress(configuration,
@@ -763,7 +800,7 @@ def _ProcessUpdate(configuration, client_query_cache, level=logging.DEBUG):
     configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
 
 def _InitializeLogging():
-  """Setting logging for console and system log."""
+  '''Setting logging for console and system log.'''
   logger = logging.getLogger(__file__)
   logger.setLevel(logging.DEBUG)
 
@@ -797,7 +834,7 @@ def _InitializeLogging():
 
 
 def _Main():
-  """Main program, parses arguments and either saves or processes them."""
+  '''Main program, parses arguments and either saves or processes them.'''
 
   global _logger
   _logger = _InitializeLogging()
