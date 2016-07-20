@@ -1,87 +1,107 @@
-usage: dns_update.py [-h] [--version]
-                     [--provider {easydns,extended,google,simple,tunnelbroker}]
-                     [--poll_interval_seconds SECONDS] --username USERNAME
-                     --password PASSWORD --update_url URL
-                     [--check_provider_address | --no_check_provider_address]
-                     [--cache_provider_address_seconds SECONDS] --hostname
-                     HOSTNAME [--myip MYIP | --offline]
-                     [--query_url URL | --no_query_url] [--save OUTPUT-FILE]
-                     [FILE [FILE ...]]
+Help on module dns_update:
 
-Dynamic DNS client
+NAME
+    dns_update
 
-optional arguments:
-  -h, --help            show this help message and exit
+FILE
+    /Users/ahd/src/dynamic_dns_update/dns_update.py
 
-General:
-  General Program flags
+DESCRIPTION
+    Client for IPv4 Dynamic DNS updates; see
+    (https://en.wikipedia.org/wiki/Dynamic_DNS#DDNS_for_Internet_access_devices).
+    Supports EasyDNS, Google, Hurricane Electrics's Tunnelbroker.net, and various
+    other providers.
+    
+    For command line help:
+      Run the program with the --help flag
+    
+    How it works:
+    
+      Given the parameters of:
+        - an update URL to connect to
+        - hostname to update
+        - username and password to authicate with
+      and optionally additional parameters:
+        - a specific IP address to update to -OR-
+        - a URL to query the client current public IP address
+    
+      The program default processing is as follows:
+        - Command line arguments are processed
+        - If possible, the current client address is determined from the provided
+          source (fixed parameter or by contacting the query URL)
+        - The hostname is queried in DNS for the current address
+        - If the client address does not known or does not match the address in DNS
+          the update URL is invoked with the username, password, hostname and
+          (if available) the current client address.
+    
+      The program has other modes which extend the basic processing:
+        - The program can process the command line arguments and save them in a file
+          for later retrieval and use. In the this mode (invoked by the --save
+          flag), no update is performed.
+        - The program can load the arguments previously written to one or more files
+          by the --save option. If multiple files are loaded, each configuration is
+          processed in order. This allows for example both updating a DNS entry at
+          one provider and updating an IPV6 tunnel endpoint at a second provider.
+        - When one or more configuration files are used, the program be specified
+          to run in polling mode, where rather than exiting after a single pass,
+          sleeps for a configured period and then processing all loaded
+          configurations again.
+    
+      It should be noted that the program is written to both minimize update server
+      load and handle some unique edge cases:
+        - The query of the client IP address is always forced to use IPv4; this
+          avoid problems with providers (such as Google) which provide IPv6
+          connections by default.
+        - By doing a simple anonymous query for the public IP address and comparing
+          it to the current DNS address of the hostname, the server update is
+          avoided completely if the address has not changed.
+        - In some cases, the hostname has no IPV4 address in DNS (example: when
+          providing an IPv6 tunnel end point) or it may wrong (example:
+          when the updated URL is the not live DNS provider.  In such cases:
+          * the check of the hostane in DNS casn be disabled.
+          * When in polling mode, the updated record's IP address can be cached in
+            memory to avoid duplicate updates.
+    
+        Other references:
+          https://support.easydns.com/tutorials/dynamicUpdateSpecs.php
+          https://support.google.com/domains/answer/6147083?hl=en
+          https://forums.he.net/index.php?topic=1994.0
+    
+        This program requires Python 2.7.
 
-  --version, -v         Print the program version
-  --provider {easydns,extended,google,simple,tunnelbroker}, -P {easydns,extended,google,simple,tunnelbroker}
-                        Provide defaults (such as the server update URL) and
-                        set restrictions consistent with the specified
-                        provider
-  --poll_interval_seconds SECONDS, -i SECONDS
-                        Interval in seconds to poll for changes to the client
-                        IP address. Default is not to poll, but instead exit
-                        after performing processing once. Note that a password
-                        cannot be specified on the command line when using
-                        this flag; it be must loaded from a configuration file
-                        written with the --save flag instead.
+CLASSES
+    __builtin__.object
+        Provider
+    
+    class Provider(__builtin__.object)
+     |  Holder for provider specific metadata.
+     |  
+     |  Methods defined here:
+     |  
+     |  __init__(self, name, update_url=None, query_url='https://domains.google.com/checkip', enabled_flags=None, cache_provider_address_seconds=0, check_provider_address=True)
+     |  
+     |  ----------------------------------------------------------------------
+     |  Data descriptors defined here:
+     |  
+     |  __dict__
+     |      dictionary for instance variables (if defined)
+     |  
+     |  __weakref__
+     |      list of weak references to the object (if defined)
+     |  
+     |  ----------------------------------------------------------------------
+     |  Data and other attributes defined here:
+     |  
+     |  generic_optional_flags = frozenset(['backmx', 'mx', 'tld', 'wildcard']...
 
-Provider:
-  DNS Service provider flags
+DATA
+    __author__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
+    __version__ = '0.9.4'
 
-  --username USERNAME, -U USERNAME
-                        User name to authenicate as on provider server
-  --password PASSWORD, -p PASSWORD
-                        Password/authorization token on provider server
-  --update_url URL, -u URL
-                        DNS service provider web address for IP address
-                        updates. Default for provider "simple" is None
-  --check_provider_address, -k
-                        Check the current address reported for the hostname
-                        (specified by --hostname by DNS, and skip updating the
-                        provider if the address reported by DNS is correct
-  --no_check_provider_address, -K
-                        Do not check the current client address set at the
-                        provider when polling.
-  --cache_provider_address_seconds SECONDS, -c SECONDS
-                        When polling via the --poll_interval_seconds flag,
-                        remember the address currently set at the provider for
-                        the specified number of seconds, and do not attempt to
-                        update the provider if the current client public
-                        address still matches it during this period.
+VERSION
+    0.9.4
 
-Client:
-  Client specification flags
+AUTHOR
+    Kendra Electronic Wonderworks (uupc-help@kew.com)
 
-  --hostname HOSTNAME, -H HOSTNAME
-                        Name of dynamic jost to update
-  --myip MYIP, -m MYIP  Dynamic IP address to assign to host; default is query
-                        the URL specified by --query_url using IPv4.
-  --offline, -o         Set this host to a provider dependent offline status
-  --query_url URL, -q URL
-                        URL which returns the current IPv4 address of the
-                        client. The default query URL is
-                        https://domains.google.com/checkip
-  --no_query_url, -Q    Do not query the current address of the host before
-                        updating
 
-Persistance:
-  File save/load flags
-
-  --save OUTPUT-FILE, -s OUTPUT-FILE
-                        Name of a configuration file to write for later use.
-                        The file must not exist. When this flag is specified,
-                        the file is only written; no server update is
-                        performed.
-  FILE                  Load configuration file(s) previously written with the
-                        --save flag and process the provider defined in each.
-                        The use of saved configuration files is the only way
-                        to have the program process more than one update per
-                        invocation.
-
-The above listed flags are valid for provider "simple". For the flags valid
-for another provider, specifiy the --provider flag with the --help flag on the
-command line.
