@@ -36,7 +36,7 @@ How it works:
       processed in order. This allows for example both updating a DNS entry at
       one provider and updating an IPV6 tunnel endpoint at a second provider.
     - When one or more configuration files are used, the program be specified
-      to run in polling mode, where rather than exiting after a single pass,
+      to run in polling mode, where rather than exiting after a single pass, it
       sleeps for a configured period and then processing all loaded
       configurations again.
 
@@ -51,7 +51,7 @@ How it works:
     - In some cases, the hostname has no IPV4 address in DNS (example: when
       providing an IPv6 tunnel end point) or it may wrong (example:
       when the updated URL is the not live DNS provider.  In such cases:
-      * the check of the hostane in DNS casn be disabled.
+      * the check of the hostane in DNS can be disabled.
       * When in polling mode, the updated record's IP address can be cached in
         memory to avoid duplicate updates.
 
@@ -91,7 +91,7 @@ import urllib2
 
 
 __author__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
-__version__ = '0.9.4'
+__version__ = '0.9.5'
 
 _USER_AGENT = '{} by {} version {}'.format(os.path.basename(__file__),
                                            __author__,
@@ -185,10 +185,10 @@ _PROVIDERS = {
 #
 
 def _AddrToStr(ipv4_adddress):
-  '''Format an IP address as a string, allowing for it to be (none)
+  '''Format an IP address as a string, allowing for it to be None.
 
   Args:
-    ipv4_adddress Address to format.  Maybe None.
+    ipv4_adddress Address to format.  May be None.
 
   Returns:
     If the input is None, returns '(none)', else the address formatted as a
@@ -324,7 +324,7 @@ def _BuildProviderArguments(parser, provider, is_configuration_needed):
 
 
 def _BuildClientArguments(parser, provider, is_configuration_needed):
-  '''Add client-side configration switches to the command line parser.'''
+  '''Add client-side switches to the command line parser.'''
 
   # Client configuration flags
   client = parser.add_argument_group('Client', 'Client specification flags')
@@ -543,9 +543,10 @@ def _SaveConfiguration(file_handle, flags):
     configuration = dict(flags)
     del configuration[_SAVE_FILE_FLAG]
     pickled = pickle.dumps(configuration, pickle.HIGHEST_PROTOCOL)
-    # We use b32 encoding as a slightly less obfuscation than base 64.  This
-    # does nothing more than accidently leaking a password to an honest person;
-    # it makes no real attempt to hide information from prying eyes.
+    # b32 encoding is used as a slightly more subtle obfuscation than base 64.
+    # This does nothing more than preventing accidently leaking a password to
+    # an honest person; it makes no real attempt to hide information from prying
+    # eyes.
     file_handle.write(base64.b32encode(pickled))
   finally:
     file_handle.close()
@@ -642,7 +643,7 @@ def _QueryCurrentIPAddress(configuration,
             data[:50]))
         return None
     elif response.status in (301, 302, 303, 307):
-      # Recursively handle redirect requests
+      # Recursively handle redirect requests explicitly using IPv4
       redirect = response.getheader('Location')
       _logger.log(level, 'Redirecting ({}) {} to {}'.format(response.status,
                                                             url_parts.geturl(),
