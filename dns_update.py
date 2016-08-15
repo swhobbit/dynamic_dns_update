@@ -86,8 +86,8 @@ import urllib2
 # - processing routines
 #
 # However, as a goal of this program was to allow installing bare on a new
-# system without the use of an external install, all the routines are in this
-# single source file.
+# system without the use of an external installer, all the routines are in
+# this single source file.
 
 
 __author__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
