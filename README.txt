@@ -58,7 +58,7 @@ DESCRIPTION
         - In some cases, the hostname has no IPV4 address in DNS (example: when
           providing an IPv6 tunnel end point) or it may wrong (example:
           when the updated URL is the not live DNS provider.  In such cases:
-          * the check of the hostane in DNS casn be disabled.
+          * the check of the hostname in DNS can be disabled.
           * When in polling mode, the updated record's IP address can be cached in
             memory to avoid duplicate updates.
     
