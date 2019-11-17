@@ -186,7 +186,7 @@ _PROVIDERS = {
     _TUNNEL_BROKER:Provider(_TUNNEL_BROKER,
                             check_provider_address=False, # No hostname to query
                             query_url='http://checkip.dns.he.net/',
-                            cache_provider_address_seconds=1800,
+                            cache_provider_address_seconds=3600 * 8,
                             update_url='https://ipv4.tunnelbroker.net/'
                             'nic/update'),
 }
