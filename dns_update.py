@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 '''
 Client for IPv4 Dynamic DNS updates; see
 (https://en.wikipedia.org/wiki/Dynamic_DNS#DDNS_for_Internet_access_devices).
@@ -60,12 +60,14 @@ How it works:
       https://support.google.com/domains/answer/6147083?hl=en
       https://forums.he.net/index.php?topic=1994.0
 
-    This program requires Python 2.7.
+    This program requires Python 3.7.
 '''
 
 import argparse
 import base64
-import httplib
+import http
+import http.client
+from http import HTTPStatus
 import logging
 import logging.handlers
 import os.path
@@ -74,11 +76,12 @@ import re
 import socket
 import sys
 import time
-import urlparse
-import urllib2
+import urllib
+import urllib.parse
+import urllib.request
 
 # NOTE    NOTE    NOTE
-# In broard terms, this source is in three parts, which would normally be three
+# In broad terms, this source is in three parts, which would normally be three
 # or more files:
 #
 # - utility routines
@@ -91,7 +94,7 @@ import urllib2
 
 
 __author__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
-__version__ = '0.9.5'
+__version__ = '1.0.1'
 
 _USER_AGENT = '{} by {} version {}'.format(os.path.basename(__file__),
                                            __author__,
@@ -100,6 +103,7 @@ _USER_AGENT = '{} by {} version {}'.format(os.path.basename(__file__),
 # Provider Server side flags
 _PASSWORD_FLAG = 'password'
 _USERNAME_FLAG = 'username'
+_LOG_LEVEL_FLAG = 'log_level'
 _PROVIDER_NAME_FLAG = 'provider'
 _UPDATE_URL_FLAG = 'update_url'
 _QUERY_URL_FLAG = 'query_url'
@@ -134,12 +138,18 @@ _TUNNEL_BROKER = 'tunnelbroker'
 _COMMAND_PREFIX = '--'
 _NO_PREFIX = 'no_'
 
+_LOG_LEVELS = {
+        'debug': logging.DEBUG,
+        'info': logging.INFO,
+        'warning': logging.WARNING,
+    }
+
 _ADDRESS_RE = re.compile(r'({octet}\.{octet}\.{octet}\.{octet})'.format(
     octet=r'(25[0-5]|2[0-4]\d|[01]?\d{1,2})'))
 
-_logger = None
+_LOGGER = logging.getLogger(__file__)
 
-class Provider(object):
+class Provider():
   '''Holder for provider specific metadata.'''
   generic_optional_flags = frozenset([
       _WILDCARD_FLAG,
@@ -196,8 +206,8 @@ def _AddrToStr(ipv4_adddress):
   '''
   if ipv4_adddress:
     return socket.inet_ntoa(ipv4_adddress)
-  else:
-    return '(none)'
+
+  return '(none)'
 
 def _PreparseArguments(args):
   '''Simple preliminary parse to determine how to parse full flags.
@@ -229,6 +239,10 @@ def _PreparseArguments(args):
 
   return (provider, is_configuration_needed)
 
+def _Lower(text):
+  '''Lower case the provided string.'''
+  return text.lower()
+
 def _BuildGeneralArguments(parser):
   '''Add general program related switches to the command line parser.'''
   general = parser.add_argument_group('General', 'General Program flags')
@@ -243,9 +257,18 @@ def _BuildGeneralArguments(parser):
                        '-P',
                        choices=sorted(_PROVIDERS.keys()),
                        default=_SIMPLE,
+                       type=_Lower,
                        help='Provide defaults (such as the server update URL) '
                        'and set '
                        'restrictions consistent with the specified provider')
+  general.add_argument(_COMMAND_PREFIX + _LOG_LEVEL_FLAG,
+                       '-l',
+                       choices=(_LOG_LEVELS.keys()),
+                       type=_Lower,
+                       default=argparse.SUPPRESS,
+                       help='Logging level. '
+                       'Default is run the first pass at level DEBUG and then '
+                       'switch to INFO.')
 
   general.add_argument(
       _COMMAND_PREFIX + _POLL_INTERVAL_SECONDS_FLAG,
@@ -332,7 +355,7 @@ def _BuildClientArguments(parser, provider, is_configuration_needed):
   client.add_argument(_COMMAND_PREFIX + _HOSTNAME_FLAG,
                       '-H',
                       required=is_configuration_needed,
-                      help='Name of dynamic jost to update')
+                      help='Name of dynamic host to update')
 
   exclusive = client.add_mutually_exclusive_group()
   exclusive.add_argument(_COMMAND_PREFIX + _MYIP_FLAG,
@@ -477,12 +500,16 @@ def _CheckConflicts(args, parser):
   if _CONFIGURATION_FILE_FLAG in flags:
     conflicts = [f for f in flags
                  if f not in [_CONFIGURATION_FILE_FLAG,
+                              _LOG_LEVEL_FLAG,
                               _POLL_INTERVAL_SECONDS_FLAG]
                  and flags[f] != parser.get_default(f)]
     if conflicts:
-      parser.error('Only the {}{} flag may specified on the command line when '
-                   'loading configurations from one more files.'.format(
-                       _COMMAND_PREFIX, _POLL_INTERVAL_SECONDS_FLAG))
+      parser.error('Only the {prefix}{} and {prefix}{} flags '
+                   'may specified on the command line when '
+                   'loading configuration(s) from file(s).'.format(
+                       _POLL_INTERVAL_SECONDS_FLAG,
+                       _LOG_LEVEL_FLAG,
+                       prefix=_COMMAND_PREFIX))
       parser.exit(3)
 
   conflict_tuples = [
@@ -495,13 +522,14 @@ def _CheckConflicts(args, parser):
       conflicts = [f for f in others
                    if f in flags and flags[f] != parser.get_default(f)]
       if conflicts:
-        parser.error('The {}{} flag conflicts with the {} flag(s). '
+        parser.error('The {prefix}{} flag conflicts with the {} flag(s). '
                      'The conflict may actually be with related flags, '
                      'for example '
-                     'multiple flags implicitly affect the {}{} flag.'.format(
-                         _COMMAND_PREFIX, flag,
+                     'multiple flags implicitly affect the {prefix}{} '
+                     ' flag.'.format(
+                         flag,
                          ' '.join([_COMMAND_PREFIX + f for f in conflicts]),
-                         _COMMAND_PREFIX, _MYIP_FLAG))
+                         _MYIP_FLAG, prefix=_COMMAND_PREFIX))
         parser.exit(4)
 
 
@@ -519,12 +547,12 @@ def _BuildCommandLineParser(args):
       description='Dynamic DNS client',
       add_help=True,
       epilog='The above listed flags are valid for provider "{}". '
-      'For the flags valid for another provider, specifiy the {}{} flag '
-      'with the {}help flag on the command '
+      'For the flags valid for another provider, specifiy the '
+      '{prefix}{} flag '
+      'with the {prefix}help flag on the command '
       'line.'.format(provider.name,
-                     _COMMAND_PREFIX,
                      _PROVIDER_NAME_FLAG,
-                     _COMMAND_PREFIX))
+                     prefix=_COMMAND_PREFIX))
 
   _BuildGeneralArguments(parser)
   _BuildProviderArguments(parser, provider, is_configuration_needed)
@@ -551,9 +579,9 @@ def _SaveConfiguration(file_handle, flags):
   finally:
     file_handle.close()
 
-  _logger.debug('Wrote {} with:'.format(flags[_SAVE_FILE_FLAG].name))
+  _LOGGER.debug('Wrote %s with:', flags[_SAVE_FILE_FLAG].name)
   for flag in sorted(configuration):
-    _logger.debug('\t{}\t{}'.format(flag, configuration[flag]))
+    _LOGGER.debug('\t%s\t%s', flag, configuration[flag])
 
 
 def _LoadConfiguration(file_handle):
@@ -569,99 +597,132 @@ def _LoadConfiguration(file_handle):
 def _GetRecordedDNSAddress(configuration):
   '''Report IPv4 address of specified hostname as known by provider.'''
   if configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1] > time.time():
-    _logger.debug('Using cached address value {}, cache expires at {}'.format(
+    _LOGGER.debug(
+        'Using cached address value %s, cache expires at %s',
         _AddrToStr(configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][0]),
-        time.ctime(configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1])))
+        time.ctime(configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1]))
     return configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][0]
-  elif configuration[_CHECK_PROVIDER_ADDRESS]:
+
+  if configuration[_CHECK_PROVIDER_ADDRESS]:
     try:
-      return socket.inet_aton(socket.gethostbyname(
-          configuration[_HOSTNAME_FLAG]))
-    except IOError, _:
+      return socket.inet_aton(
+          socket.gethostbyname(configuration[_HOSTNAME_FLAG]))
+    except (IOError) as _:
       return None
-  else:
-    # checking not enabled.
-    return None
+
+  # checking not enabled.
+  return None
 
 
 def _QueryCurrentIPAddress(configuration,
                            override_url=None,
                            level=logging.DEBUG):
   '''Query a remote webserver to determine our possibly NATted address.'''
+
+  def _CreateConnection(hostname_port, timeout=None, source_address=None):
+    '''IPv4-only replacement for HTTPConnnection create_connection'''
+    hostname, port = hostname_port
+
+    res = None
+    try:
+      # The secret sauce is only query IPv4 familt addresses, so we only get
+      # an IPv4 address back for connectting to.
+      res = socket.getaddrinfo(hostname,
+                               port,
+                               socket.AF_INET,
+                               socket.SOCK_STREAM)
+      address_family, socktype, proto, _, hostaddr_port = res[0]
+    except Exception as err:
+      _LOGGER.error("Cannot look up %s, result was %s, exception:\n%s",
+                    hostname,
+                    res,
+                    err)
+      raise
+
+    sock = socket.socket(address_family, socktype, proto)
+    if (timeout is not None and
+        timeout is not socket._GLOBAL_DEFAULT_TIMEOUT):  # pylint: disable=W0212
+      sock.settimeout(timeout)
+    if source_address:
+      sock.bind(source_address)
+    sock.connect(hostaddr_port)
+    return sock
+
+
   if _QUERY_URL_FLAG not in configuration or not configuration[_QUERY_URL_FLAG]:
     return None
 
-  url_parts = urlparse.urlsplit(override_url or configuration[_QUERY_URL_FLAG])
+  url = override_url or configuration[_QUERY_URL_FLAG]
+  url_parts = urllib.parse.urlsplit(url)
+  _LOGGER.debug("Querying %s for IPv4 address of client", url)
 
-  # The secret sauce for both HTTP and HTTPS below is the source address of
-  # 0.0.0.0, which implicitly forces IPv4 for the connection.
   if url_parts.scheme == 'http':
-    connection = httplib.HTTPConnection(
+    connection = http.client.HTTPConnection(
         url_parts.hostname,
-        url_parts.port or httplib.HTTP_PORT,
-        True,
-        None,
-        ('0.0.0.0', 0))
+        port=(url_parts.port or http.client.HTTP_PORT))
   elif url_parts.scheme == 'https':
-    # pylint: disable=R0204
-    connection = httplib.HTTPSConnection(
+    connection = http.client.HTTPSConnection(
         url_parts.hostname,
-        url_parts.port or httplib.HTTPS_PORT,
-        None,
-        None,
-        True,
-        None,
-        ('0.0.0.0', 0))
+        port=(url_parts.port or http.client.HTTPS_PORT))
   else:
     raise NotImplementedError(
         'Scheme "{}" not supported for IP address look up'.format(
             url_parts.scheme))
 
+  # The secret sauce for both HTTP and HTTPS connections is our override of the
+  # _create_connection which only queries IPv4 server addresses and thus queries
+  # via the client's IPv4 address.   (A query via IPv6 obviously returns an IPv6
+  # address.)
+  connection._create_connection = _CreateConnection    # pylint: disable=W0212
+
   try:
+    connection.connect()
     connection.request('GET',
-                       urlparse.urlunsplit((None,
-                                            None,
-                                            url_parts.path,
-                                            url_parts.query,
-                                            url_parts.fragment)),
+                       url,
                        None,
                        {'User-Agent':_USER_AGENT})
     response = connection.getresponse()
 
-    if response.status == 200:
-      data = response.read()
+    if response.status == HTTPStatus.OK:
+      data = response.read().decode()
       match = _ADDRESS_RE.search(data)
       if match:
-        _logger.log(level,
-                    '{} reports client public address as {}'.format(
-                        url_parts.geturl(),
-                        match.group(0)))
+        _LOGGER.debug(
+            '%s reports client public address as %s',
+            url,
+            match.group(0))
         return socket.inet_aton(match.group(0))
-      else:
-        _logger.error('No IP address returned by {}: {} ...'.format(
-            url_parts.geturl(),
-            data[:50]))
-        return None
-    elif response.status in (301, 302, 303, 307):
+      _LOGGER.error(
+          'No IP address returned by %s: %s ...',
+          url,
+          data[:80])
+      return None
+
+    if response.status in (HTTPStatus.MOVED_PERMANENTLY,
+                           HTTPStatus.FOUND,
+                           HTTPStatus.SEE_OTHER,
+                           HTTPStatus.TEMPORARY_REDIRECT):
       # Recursively handle redirect requests explicitly using IPv4
       redirect = response.getheader('Location')
-      _logger.log(level, 'Redirecting ({}) {} to {}'.format(response.status,
-                                                            url_parts.geturl(),
-                                                            redirect))
+      _LOGGER.debug(
+          'Redirecting (%s) %s to %s',
+          response.status,
+          url_parts.geturl(),
+          redirect)
       return _QueryCurrentIPAddress(configuration,
                                     override_url=redirect,
                                     level=level)
-    else:
-      raise urllib2.HTTPError(url_parts.geturl(),
-                              response.status,
-                              response.reason,
-                              response.getheaders(),
-                              response.fp)
-  except IOError, ex:
-    _logger.warn('Error retrieving current IP address: {}'.format(ex))
+    raise urllib.error.HTTPError(url_parts.geturl(),
+                                 response.status,
+                                 response.reason,
+                                 response.getheaders(),
+                                 response.fp)
+  except IOError as ex:
+    _LOGGER.warning('Error retrieving current IP address: %s', ex)
     raise
   finally:
     connection.close()
+  return None
 
 
 def _GetCurrentPublicIPAddress(configuration,
@@ -685,9 +746,7 @@ def _GetCurrentPublicIPAddress(configuration,
   return current_client_address
 
 
-def _UpdateDNSAddress(configuration,
-                      current_client_address,
-                      level=logging.DEBUG):
+def _UpdateDNSAddress(configuration, current_client_address):
   '''Update the providers address for our client.'''
   parameters = []
 
@@ -712,12 +771,14 @@ def _UpdateDNSAddress(configuration,
     if flag in configuration and configuration[flag]:
       parameters.append(flag)
 
-  request = urllib2.Request('{}?{}'.format(configuration[_UPDATE_URL_FLAG],
-                                           '&'.join(parameters)),
-                            headers={'User-Agent':_USER_AGENT})
+  request = urllib.request.Request(
+      '{}?{}'.format(
+          configuration[_UPDATE_URL_FLAG],
+          '&'.join(parameters)),
+      headers={'User-Agent':_USER_AGENT})
 
   # Following code based on stackoverflow.com example at http://goo.gl/WJldUm
-  passman = urllib2.HTTPPasswordMgrWithDefaultRealm()
+  passman = urllib.request.HTTPPasswordMgrWithDefaultRealm()
   passman.add_password(None,
                        request.get_full_url(),
                        configuration[_USERNAME_FLAG],
@@ -725,95 +786,97 @@ def _UpdateDNSAddress(configuration,
   # because we have put None at the start it will always use this
   # username/password combination for urls for which `url` is a super-url
 
-  authhandler = urllib2.HTTPBasicAuthHandler(passman)
-  opener = urllib2.build_opener(authhandler)
-  urllib2.install_opener(opener)
+  authhandler = urllib.request.HTTPBasicAuthHandler(passman)
+  opener = urllib.request.build_opener(authhandler)
+  urllib.request.install_opener(opener)
 
-  # All calls to urllib2.urlopen will now use our handler.
+  # All calls to urllib.urlopen will now use our handler.
   # Make sure not to include the protocol in with the URL, or
   # HTTPPasswordMgrWithDefaultRealm will be very confused.
   # You must (of course) use it when fetching the page though.
 
   try:
-    _logger.log(level, 'Invoking: {}'.format(request.get_full_url()))
+    _LOGGER.debug('Invoking: %s', request.get_full_url())
     # authentication is now handled automatically for us
-    handle = urllib2.urlopen(request)
-    # TODO: parse text response and handle errors
+    handle = urllib.request.urlopen(request)
+
     for line in handle:
-      line = line.strip()
+      line = line.decode().strip()
+
       if line:
         token = line.split()
         if token[0] in ['good', 'nochg']:
-          _logger.log(level, 'Success response "{}" from {} for host {}'.format(
+          _LOGGER.debug(
+              'Success response "%s" from %s for host %s',
               token[0],
-              request.get_host(),
-              configuration[_HOSTNAME_FLAG]))
+              request.origin_req_host,
+              configuration[_HOSTNAME_FLAG])
         else:
-          _logger.log(level,
-                      'ERROR response "{}" from {} for host {}: {}'.format(
-                          token[0],
-                          request.get_host(),
-                          configuration[_HOSTNAME_FLAG],
-                          line))
-          raise IOError('{} update via {} failed: {}'.format(
+          _LOGGER.warning(
+              'ERROR response "%s" from %s for host %s: %s',
+              token[0],
+              request.origin_req_host,
               configuration[_HOSTNAME_FLAG],
-              request.get_host(),
-              line))
+              line)
+          raise IOError(
+              '{} update via {} failed: {}'.format(
+                  configuration[_HOSTNAME_FLAG],
+                  request.origin_req_host,
+                  line))
 
       return True
-  except (urllib2.HTTPError, urllib2.URLError), ex:
-    _logger.error('Error processing {}: {}'.format(request.get_full_url(), ex))
+  except (urllib.error.HTTPError, urllib.error.URLError) as ex:
+    _LOGGER.error('Error processing %s: %s', request.get_full_url(), ex)
     raise ex
 
 
-def _ProcessUpdate(configuration, client_query_cache, level=logging.DEBUG):
+def _ProcessUpdate(configuration, client_query_cache):
   '''Perform processing to update a DNS single configuration.'''
   hostname = configuration[_HOSTNAME_FLAG]
   try:
     current_client_address = _GetCurrentPublicIPAddress(configuration,
-                                                        client_query_cache,
-                                                        level=level)
+                                                        client_query_cache)
     recorded_dns_address = _GetRecordedDNSAddress(configuration)
     if (not recorded_dns_address or
         recorded_dns_address != current_client_address):
-      _logger.info(
-          'Old address {} for {} will be updated to address {}'.format(
-              _AddrToStr(recorded_dns_address),
-              hostname,
-              _AddrToStr(current_client_address)))
+      _LOGGER.info(
+          'Old address %s for %s will be updated to address %s',
+          _AddrToStr(recorded_dns_address),
+          hostname,
+          _AddrToStr(current_client_address))
       # reset any cache entry, then perform the actual update.
       configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
-      if _UpdateDNSAddress(configuration, current_client_address, level=level):
+      if _UpdateDNSAddress(configuration, current_client_address):
         configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (
             current_client_address,
             time.time() + configuration[_CACHE_PROVIDER_ADDRESS_SECONDS])
     else:
-      _logger.log(
-          level,
-          'No update needed for {}, address is {} (client is {})'.format(
-              hostname,
-              _AddrToStr(recorded_dns_address),
-              _AddrToStr(current_client_address)))
-  except IOError, ex:
-    _logger.error('Update processing for {} failed: {}'.format(
+      _LOGGER.debug(
+          'No update needed for %s, address is %s',
+          hostname,
+          _AddrToStr(recorded_dns_address))
+  except IOError as ex:
+    _LOGGER.error(
+        'Update processing for %s failed: %s',
         hostname,
-        ex))
+        ex)
     configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
 
-def _InitializeLogging():
-  '''Setting logging for console and system log.'''
-  logger = logging.getLogger(__file__)
+def _InitializeLogging(logger):
+  '''Set logging for console and system log.'''
   logger.setLevel(logging.DEBUG)
 
   datefmt = '%m-%d %H:%M:%S '
-  short_format = '{}[%(process)d] %(module)s-%(levelname)s %(message)s'.format(
-      os.path.basename(__file__))
-  full_format = '%(asctime)s' + short_format
+  short_format = ' '.join(
+      [
+          '%(filename)s[%(process)d]',
+          '%(levelname)s',
+          '%(message)s',
+      ])
 
   console_handler = logging.StreamHandler()
-  formatter = logging.Formatter(fmt=full_format, datefmt=datefmt)
+  formatter = logging.Formatter(fmt=short_format, datefmt=datefmt)
   console_handler.setFormatter(formatter)
-  console_handler.setLevel(logging.DEBUG)
   logger.addHandler(console_handler)
 
   address = ('localhost', logging.handlers.SYSLOG_UDP_PORT)
@@ -828,18 +891,19 @@ def _InitializeLogging():
       address=address,
       facility=logging.handlers.SysLogHandler.LOG_DAEMON)
   syslog_handler.setFormatter(logging.Formatter(fmt=short_format))
-  syslog_handler.setLevel(logging.DEBUG)
   logger.addHandler(syslog_handler)
-
+  logger.info("%s version %s begins", os.path.basename(__file__), __version__)
   return logger
 
 
 def _Main():
   '''Main program, parses arguments and either saves or processes them.'''
 
-  global _logger
-  _logger = _InitializeLogging()
+  _InitializeLogging(_LOGGER)
   flags = vars(_BuildCommandLineParser(sys.argv[1:]))
+
+  if _LOG_LEVEL_FLAG in flags:
+    _LOGGER.setLevel(_LOG_LEVELS[flags[_LOG_LEVEL_FLAG]])
 
   # we have a file to save, do so and then exit with updating any provider
   if _SAVE_FILE_FLAG in flags:
@@ -862,17 +926,22 @@ def _Main():
     configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
 
   first_pass = True
-  log_level = logging.INFO
   while first_pass or _POLL_INTERVAL_SECONDS_FLAG in flags:
     # new client address cache every processing pass
     client_query_cache = {}
     for configuration in configurations:
-      _ProcessUpdate(configuration, client_query_cache, level=log_level)
+      _ProcessUpdate(configuration, client_query_cache)
+
     if _POLL_INTERVAL_SECONDS_FLAG in flags:
+      _LOGGER.debug('Sleeping for %d seconds',
+                    flags[_POLL_INTERVAL_SECONDS_FLAG])
       time.sleep(flags[_POLL_INTERVAL_SECONDS_FLAG])
-    first_pass = False
-    # Report less after first pass
-    log_level = logging.DEBUG
+
+    if first_pass:
+      first_pass = False
+      # By default, report less after the first pass
+      if not _LOG_LEVEL_FLAG in flags:
+        _LOGGER.setLevel(logging.INFO)
 
 if __name__ == '__main__':
   _Main()
