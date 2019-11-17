@@ -605,9 +605,19 @@ def _GetRecordedDNSAddress(configuration):
 
   if configuration[_CHECK_PROVIDER_ADDRESS]:
     try:
-      return socket.inet_aton(
-          socket.gethostbyname(configuration[_HOSTNAME_FLAG]))
-    except (IOError) as _:
+      address = socket.gethostbyname(configuration[_HOSTNAME_FLAG])
+      if address == '0.0.0.0':
+        reported = 'OFFLINE'
+      else:
+        reported = address
+      _LOGGER.debug("Client %s address as reported by DNS is %s",
+                    configuration[_HOSTNAME_FLAG],
+                    reported)
+      return socket.inet_aton(address)
+    except (IOError) as ex:
+      _LOGGER.debug('Unable to query DNS for %s, error %s',
+                    configuration[_HOSTNAME_FLAG],
+                    str(ex))
       return None
 
   # checking not enabled.
@@ -679,8 +689,7 @@ def _QueryCurrentIPAddress(configuration,
     connection.connect()
     connection.request('GET',
                        url,
-                       None,
-                       {'User-Agent':_USER_AGENT})
+                       headers={'User-Agent':_USER_AGENT})
     response = connection.getresponse()
 
     if response.status == HTTPStatus.OK:
@@ -712,7 +721,8 @@ def _QueryCurrentIPAddress(configuration,
       return _QueryCurrentIPAddress(configuration,
                                     override_url=redirect,
                                     level=level)
-    raise urllib.error.HTTPError(url_parts.geturl(),
+
+    raise urllib.error.HTTPError(url,
                                  response.status,
                                  response.reason,
                                  response.getheaders(),
@@ -722,6 +732,7 @@ def _QueryCurrentIPAddress(configuration,
     raise
   finally:
     connection.close()
+
   return None
 
 
