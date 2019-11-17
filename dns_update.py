@@ -374,7 +374,8 @@ def _BuildClientArguments(parser, provider, is_configuration_needed):
                          action='store_const',
                          const=socket.inet_aton('0.0.0.0'),
                          help='Set this host to a provider dependent offline '
-                         ' status ')
+                         ' status. '
+                         ' (Equivalent to --myip 0.0.0.0)')
 
   exclusive = client.add_mutually_exclusive_group()
   exclusive.add_argument(_COMMAND_PREFIX + _QUERY_URL_FLAG,
@@ -495,34 +496,45 @@ def _CheckConflicts(args, parser):
   '''Check conflicting options have been not specified.'''
   flags = vars(args)
 
+  # Note: --offline is implemented as --myip 0.0.0.0, so we only check for the
+  # latter flag below.
+
   # Almost everything conflicts with loading configuration files, so we only
   # check for what's valid or its default.
-  if _CONFIGURATION_FILE_FLAG in flags:
-    conflicts = [f for f in flags
-                 if f not in [_CONFIGURATION_FILE_FLAG,
-                              _LOG_LEVEL_FLAG,
-                              _POLL_INTERVAL_SECONDS_FLAG]
-                 and flags[f] != parser.get_default(f)]
-    if conflicts:
-      parser.error('Only the {prefix}{} and {prefix}{} flags '
-                   'may specified on the command line when '
-                   'loading configuration(s) from file(s).'.format(
-                       _POLL_INTERVAL_SECONDS_FLAG,
-                       _LOG_LEVEL_FLAG,
-                       prefix=_COMMAND_PREFIX))
-      parser.exit(3)
+  allowed = set((_CONFIGURATION_FILE_FLAG,
+                 _LOG_LEVEL_FLAG,
+                 _POLL_INTERVAL_SECONDS_FLAG))
+  restricted = set([_CONFIGURATION_FILE_FLAG, _POLL_INTERVAL_SECONDS_FLAG])
+  for restricting_option in restricted:
+    if restricting_option in flags:
+      conflicts = [f for f in flags
+                   if f not in allowed
+                   and flags[f] != parser.get_default(f)]
+      if conflicts:
+        options = [_COMMAND_PREFIX + option
+                   for option in allowed if option not in restricted]
+        parser.error('When loading configuration(s) from file(s) '
+                     'or running continuously, only the following additional '
+                     'options '
+                     'may by specified on the command line:\n\t{}'.format(
+                        '\n\t'.join(sorted(options)),
+                        prefix=_COMMAND_PREFIX))
+        parser.exit(3)
 
   conflict_tuples = [
-      (_POLL_INTERVAL_SECONDS_FLAG,
-       (_MYIP_FLAG, _SAVE_FILE_FLAG, _PASSWORD_FLAG)),
-      (_MYIP_FLAG, (_QUERY_URL_FLAG, _SAVE_FILE_FLAG)),
+      (_SAVE_FILE_FLAG,
+       (_QUERY_URL_FLAG, _MYIP_FLAG)),
+      (_MYIP_FLAG,
+       (_QUERY_URL_FLAG, _POLL_INTERVAL_SECONDS_FLAG)),
   ]
+
   for flag, others in conflict_tuples:
     if flag in flags and flags[flag] != parser.get_default(flag):
       conflicts = [f for f in others
                    if f in flags and flags[f] != parser.get_default(f)]
+
       if conflicts:
-        parser.error('The {prefix}{} flag conflicts with the {} flag(s). '
+        parser.error('The {prefix}{} flag conflicts with the {} flag(s).\n\t'
                      'The conflict may actually be with related flags, '
                      'for example '
                      'multiple flags implicitly affect the {prefix}{} '
