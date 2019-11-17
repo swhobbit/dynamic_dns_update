@@ -92,13 +92,22 @@ import urllib.request
 # system without the use of an external installer, all the routines are in
 # this single source file.
 
-
 __author__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
 __version__ = '1.0.1'
 
 _USER_AGENT = '{} by {} version {}'.format(os.path.basename(__file__),
                                            __author__,
                                            __version__)
+
+
+_LOGGER = logging.getLogger(__file__)
+
+_PASSWORD_MANAGER = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+
+_ADDRESS_RE = re.compile(r'({octet}\.{octet}\.{octet}\.{octet})'.format(
+    octet=r'(25[0-5]|2[0-4]\d|[01]?\d{1,2})'))
+
+# Begin command options and associated data.
 
 # Provider Server side flags
 _PASSWORD_FLAG = 'password'
@@ -144,19 +153,14 @@ _LOG_LEVELS = {
         'warning': logging.WARNING,
     }
 
-_ADDRESS_RE = re.compile(r'({octet}\.{octet}\.{octet}\.{octet})'.format(
-    octet=r'(25[0-5]|2[0-4]\d|[01]?\d{1,2})'))
-
-_LOGGER = logging.getLogger(__file__)
-
 class Provider():
   '''Holder for provider specific metadata.'''
-  generic_optional_flags = frozenset([
+  generic_optional_flags = (
       _WILDCARD_FLAG,
       _MX_FLAG,
       _BACK_MX_FLAG,
       _TLD_FLAG,
-  ])
+  )
 
   def __init__(self, name,
                update_url=None,
@@ -182,6 +186,8 @@ _PROVIDERS = {
                       update_url='https://members.easydns.com/dyn/dyndns.php',
                       enabled_flags=Provider.generic_optional_flags),
     _GOOGLE:Provider(_GOOGLE,
+                     enabled_flags=(_OFFLINE_FLAG,) +
+                                    (Provider.generic_optional_flags),
                      update_url='https://domains.google.com/nic/update'),
     _TUNNEL_BROKER:Provider(_TUNNEL_BROKER,
                             check_provider_address=False, # No hostname to query
@@ -195,20 +201,20 @@ _PROVIDERS = {
 #  UTILITY ROUTINES
 #
 
-def _AddrToStr(ipv4_adddress):
+def _AddrToStr(ipv4_address):
   '''Format an IP address as a string, allowing for it to be None.
 
   Args:
-    ipv4_adddress Address to format.  May be None.
+    ipv4_address Address to format.  May be None.
 
   Returns:
-    If the input is None, returns '(none)', else the address formatted as a
-    string.
+    If the input is of type Bytes, the address is formatted as a
+    string, else the original input is returned.
   '''
-  if ipv4_adddress:
-    return socket.inet_ntoa(ipv4_adddress)
+  if isinstance(ipv4_address, bytes):
+    return socket.inet_ntoa(ipv4_address)
 
-  return '(none)'
+  return ipv4_address
 
 def _PreparseArguments(args):
   '''Simple preliminary parse to determine how to parse full flags.
@@ -371,12 +377,10 @@ def _BuildClientArguments(parser, provider, is_configuration_needed):
   exclusive.add_argument(_COMMAND_PREFIX + _OFFLINE_FLAG,
                          '-o',
                          default=argparse.SUPPRESS,
-                         dest=_MYIP_FLAG,
                          action='store_const',
-                         const=socket.inet_aton('0.0.0.0'),
+                         const='yes',
                          help='Set this host to a provider dependent offline '
-                         ' status. '
-                         ' (Equivalent to --myip 0.0.0.0)')
+                         ' status. ')
 
   exclusive = client.add_mutually_exclusive_group()
   exclusive.add_argument(_COMMAND_PREFIX + _QUERY_URL_FLAG,
@@ -497,9 +501,6 @@ def _CheckConflicts(args, parser):
   '''Check conflicting options have been not specified.'''
   flags = vars(args)
 
-  # Note: --offline is implemented as --myip 0.0.0.0, so we only check for the
-  # latter flag below.
-
   # Almost everything conflicts with loading configuration files, so we only
   # check for what's valid or its default.
   allowed = set((_CONFIGURATION_FILE_FLAG,
@@ -514,10 +515,13 @@ def _CheckConflicts(args, parser):
       if conflicts:
         options = [_COMMAND_PREFIX + option
                    for option in allowed if option not in restricted]
-        parser.error('When loading configuration(s) from file(s) '
-                     'or running continuously, only the following additional '
+        conflicts = [_COMMAND_PREFIX + conflict for conflict in conflicts]
+        parser.error('Options not allowed:\n\t{}\n\n'
+                     'When loading configuration(s) from file(s) '
+                     'and optionally running continuously, only the following additional '
                      'options '
                      'may by specified on the command line:\n\t{}'.format(
+                         '\n\t'.join(sorted(conflicts)),
                          '\n\t'.join(sorted(options)),
                          prefix=_COMMAND_PREFIX))
         parser.exit(3)
@@ -619,13 +623,9 @@ def _GetRecordedDNSAddress(configuration):
   if configuration[_CHECK_PROVIDER_ADDRESS]:
     try:
       address = socket.gethostbyname(configuration[_HOSTNAME_FLAG])
-      if address == '0.0.0.0':
-        reported = 'OFFLINE'
-      else:
-        reported = address
       _LOGGER.debug("Client %s address as reported by DNS is %s",
                     configuration[_HOSTNAME_FLAG],
-                    reported)
+                    address)
       return socket.inet_aton(address)
     except (IOError) as ex:
       _LOGGER.debug('Unable to query DNS for %s, error %s',
@@ -753,6 +753,8 @@ def _GetCurrentPublicIPAddress(configuration,
                                client_query_cache,
                                level=logging.DEBUG):
   '''Determine the current public client address to send to the provider'''
+  if _OFFLINE_FLAG in configuration:
+      return _OFFLINE_FLAG
   if _MYIP_FLAG in configuration:
     current_client_address = configuration[_MYIP_FLAG]
   elif configuration[_QUERY_URL_FLAG]:
@@ -770,19 +772,31 @@ def _GetCurrentPublicIPAddress(configuration,
   return current_client_address
 
 
+def _StorePassword(url_prefix, configuration):
+  '''If not already cached, store the password for the specified URL prefix.'''
+  # Following code (and associated code in Main()) based on stackoverflow.com
+  # example at http://goo.gl/WJldUm
+  (user, _) = _PASSWORD_MANAGER.find_user_password(None, url_prefix)
+  if not user:
+    _LOGGER.info(
+        "Adding authenication data for URL %s (user %s) to password manager",
+        url_prefix,
+        configuration[_USERNAME_FLAG])
+
+    # Because we have put None as the realm the start it will always use this
+    # username/password combination for urls for which `url` is a super-url
+    _PASSWORD_MANAGER.add_password(
+        None,
+        url_prefix,
+        configuration[_USERNAME_FLAG],
+        configuration[_PASSWORD_FLAG])
+
+
 def _UpdateDNSAddress(configuration, current_client_address):
   '''Update the providers address for our client.'''
   parameters = []
 
-  # The current client address, our reason to exist, is special because the
-  # value is not part of the configuration dictionary.  If it is not included,
-  # then the update server is assumed to "Do The Right Thing" by examining the
-  # connection metadata.
-  if current_client_address:
-    parameters.append('{}={}'.format(_MYIP_FLAG,
-                                     _AddrToStr(current_client_address)))
-
-  # URL Parameters with values in the configuration
+   # URL Parameters with values in the configuration
   for flag in [_HOSTNAME_FLAG,
                _BACK_MX_FLAG,
                _WILDCARD_FLAG,
@@ -796,28 +810,30 @@ def _UpdateDNSAddress(configuration, current_client_address):
       parameters.append(flag)
 
   request = urllib.request.Request(
-      '{}?{}'.format(
-          configuration[_UPDATE_URL_FLAG],
-          '&'.join(parameters)),
-      headers={'User-Agent':_USER_AGENT})
+      '{}?{}'.format(configuration[_UPDATE_URL_FLAG], '&'.join(parameters)),
+                     headers={'User-Agent':_USER_AGENT})
 
-  # Following code based on stackoverflow.com example at http://goo.gl/WJldUm
-  passman = urllib.request.HTTPPasswordMgrWithDefaultRealm()
-  passman.add_password(None,
-                       request.get_full_url(),
-                       configuration[_USERNAME_FLAG],
-                       configuration[_PASSWORD_FLAG])
-  # because we have put None at the start it will always use this
-  # username/password combination for urls for which `url` is a super-url
+  _StorePassword(request.get_full_url(), configuration)
 
-  authhandler = urllib.request.HTTPBasicAuthHandler(passman)
-  opener = urllib.request.build_opener(authhandler)
-  urllib.request.install_opener(opener)
+  # We add this LAST so it doesn't affect the URL passed to _StorePassword for
+  # the site.
 
-  # All calls to urllib.urlopen will now use our handler.
-  # Make sure not to include the protocol in with the URL, or
-  # HTTPPasswordMgrWithDefaultRealm will be very confused.
-  # You must (of course) use it when fetching the page though.
+  # The current client address, our reason to exist, is special because the
+  # value is not part of the configuration dictionary.  If it is not included,
+  # then the update server is assumed to "Do The Right Thing" by examining the
+  # connection metadata
+
+  if _OFFLINE_FLAG in configuration:
+    parameters.append(
+        '{}={}'.format(_OFFLINE_FLAG, configuration[_OFFLINE_FLAG]))
+  elif current_client_address:
+    parameters.append('{}={}'.format(_MYIP_FLAG,
+                                     _AddrToStr(current_client_address)))
+
+  # Now rebuild the request with flags added after _StorePassword was called
+  request = urllib.request.Request(
+      '{}?{}'.format(configuration[_UPDATE_URL_FLAG], '&'.join(parameters)),
+                     headers={'User-Agent':_USER_AGENT})
 
   try:
     _LOGGER.debug('Invoking: %s', request.get_full_url())
@@ -864,9 +880,9 @@ def _ProcessUpdate(configuration, client_query_cache):
     if (not recorded_dns_address or
         recorded_dns_address != current_client_address):
       _LOGGER.info(
-          'Old address %s for %s will be updated to address %s',
-          _AddrToStr(recorded_dns_address),
+          'Address for %s will be updated from %s to %s',
           hostname,
+          _AddrToStr(recorded_dns_address),
           _AddrToStr(current_client_address))
       # reset any cache entry, then perform the actual update.
       configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
@@ -897,9 +913,10 @@ def _InitializeLogging(logger):
           '%(levelname)s',
           '%(message)s',
       ])
+  full_format = '%(asctime)s' + short_format
+  formatter = logging.Formatter(fmt=full_format, datefmt=datefmt)
 
   console_handler = logging.StreamHandler()
-  formatter = logging.Formatter(fmt=short_format, datefmt=datefmt)
   console_handler.setFormatter(formatter)
   logger.addHandler(console_handler)
 
@@ -926,10 +943,18 @@ def _Main():
   _InitializeLogging(_LOGGER)
   flags = vars(_BuildCommandLineParser(sys.argv[1:]))
 
+  # Configure all calls to urllib.urlopen to use a handler with its
+  # password manager. One must nake sure not to include the protocol in with
+  # the URL, or HTTPPasswordMgrWithDefaultRealm will be very confused.
+  # One must (of course) use the protocol when fetching the page though.
+  authhandler = urllib.request.HTTPBasicAuthHandler(_PASSWORD_MANAGER)
+  opener = urllib.request.build_opener(authhandler)
+  urllib.request.install_opener(opener)
+
   if _LOG_LEVEL_FLAG in flags:
     _LOGGER.setLevel(_LOG_LEVELS[flags[_LOG_LEVEL_FLAG]])
 
-  # we have a file to save, do so and then exit with updating any provider
+  # we have a file to save, do so and then exit without updating any provider
   if _SAVE_FILE_FLAG in flags:
     _SaveConfiguration(flags[_SAVE_FILE_FLAG], flags)
     sys.exit(0)
