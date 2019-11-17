@@ -23,7 +23,7 @@ How it works:
     - If possible, the current client address is determined from the provided
       source (fixed parameter or by contacting the query URL)
     - The hostname is queried in DNS for the current address
-    - If the client address does not known or does not match the address in DNS,
+    - If the client address is not known or does not match the address in DNS,
       the update URL is invoked with the username, password, hostname and
       (if available) the current client address.
 
@@ -166,7 +166,7 @@ class Provider():
                check_provider_address=True):
     self.name = name
     self.update_url = update_url
-    # 'http://domains.google.com/checkip' doesn't work without going through 
+    # 'http://domains.google.com/checkip' doesn't work without going through
     # hoops if on IPv6-enabled system because it redirects to https using
     # IPv6.
     self.query_url = query_url
@@ -518,8 +518,8 @@ def _CheckConflicts(args, parser):
                      'or running continuously, only the following additional '
                      'options '
                      'may by specified on the command line:\n\t{}'.format(
-                        '\n\t'.join(sorted(options)),
-                        prefix=_COMMAND_PREFIX))
+                         '\n\t'.join(sorted(options)),
+                         prefix=_COMMAND_PREFIX))
         parser.exit(3)
 
   conflict_tuples = [

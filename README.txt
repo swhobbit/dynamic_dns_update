@@ -3,13 +3,10 @@ Help on module dns_update:
 NAME
     dns_update
 
-FILE
-    /Users/ahd/src/dynamic_dns_update/dns_update.py
-
 DESCRIPTION
     Client for IPv4 Dynamic DNS updates; see
     (https://en.wikipedia.org/wiki/Dynamic_DNS#DDNS_for_Internet_access_devices).
-    Supports EasyDNS, Google, Hurricane Electrics's Tunnelbroker.net, and various
+    Supports EasyDNS, Google, Hurricane Electric's Tunnelbroker.net, and various
     other providers.
     
     For command line help:
@@ -30,7 +27,7 @@ DESCRIPTION
         - If possible, the current client address is determined from the provided
           source (fixed parameter or by contacting the query URL)
         - The hostname is queried in DNS for the current address
-        - If the client address does not known or does not match the address in DNS
+        - If the client address does not known or does not match the address in DNS,
           the update URL is invoked with the username, password, hostname and
           (if available) the current client address.
     
@@ -40,17 +37,17 @@ DESCRIPTION
           flag), no update is performed.
         - The program can load the arguments previously written to one or more files
           by the --save option. If multiple files are loaded, each configuration is
-          processed in order. This allows for example both updating a DNS entry at
+          processed in order. This allows for example, both updating a DNS entry at
           one provider and updating an IPV6 tunnel endpoint at a second provider.
         - When one or more configuration files are used, the program be specified
-          to run in polling mode, where rather than exiting after a single pass,
+          to run in polling mode, where rather than exiting after a single pass, it
           sleeps for a configured period and then processing all loaded
           configurations again.
     
       It should be noted that the program is written to both minimize update server
       load and handle some unique edge cases:
         - The query of the client IP address is always forced to use IPv4; this
-          avoid problems with providers (such as Google) which provide IPv6
+          avoids problems with providers (such as Google) which provide IPv6
           connections by default.
         - By doing a simple anonymous query for the public IP address and comparing
           it to the current DNS address of the hostname, the server update is
@@ -67,18 +64,21 @@ DESCRIPTION
           https://support.google.com/domains/answer/6147083?hl=en
           https://forums.he.net/index.php?topic=1994.0
     
-        This program requires Python 2.7.
+        This program requires Python 3.7.
 
 CLASSES
-    __builtin__.object
+    builtins.object
         Provider
     
-    class Provider(__builtin__.object)
+    class Provider(builtins.object)
+     |  Provider(name, update_url=None, query_url='https://domains.google.com/checkip', enabled_flags=None, cache_provider_address_seconds=0, check_provider_address=True)
+     |  
      |  Holder for provider specific metadata.
      |  
      |  Methods defined here:
      |  
      |  __init__(self, name, update_url=None, query_url='https://domains.google.com/checkip', enabled_flags=None, cache_provider_address_seconds=0, check_provider_address=True)
+     |      Initialize self.  See help(type(self)) for accurate signature.
      |  
      |  ----------------------------------------------------------------------
      |  Data descriptors defined here:
@@ -92,16 +92,15 @@ CLASSES
      |  ----------------------------------------------------------------------
      |  Data and other attributes defined here:
      |  
-     |  generic_optional_flags = frozenset(['backmx', 'mx', 'tld', 'wildcard']...
-
-DATA
-    __author__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
-    __version__ = '0.9.4'
+     |  generic_optional_flags = frozenset({'backmx', 'mx', 'tld', 'wildcard'}...
 
 VERSION
-    0.9.4
+    1.0.1
 
 AUTHOR
     Kendra Electronic Wonderworks (uupc-help@kew.com)
+
+FILE
+    /Users/ahd/src/dynamic_dns_update/dns_update.py
 
 

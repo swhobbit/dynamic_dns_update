@@ -9,4 +9,4 @@ install: /usr/local/sbin/${MAIN}
 	cp $^ $@
 
 lint:
-	pylint ${MAIN}
+	pylint3 ${MAIN}
