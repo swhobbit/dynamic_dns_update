@@ -1,12 +1,42 @@
 #!/usr/bin/env python3
 '''
 Client for IPv4 Dynamic DNS updates; see
-(https://en.wikipedia.org/wiki/Dynamic_DNS#DDNS_for_Internet_access_devices).
+(https://en.wikipedia.org/wiki/Dynamic_DNS).
 Supports EasyDNS, Google, Hurricane Electric's Tunnelbroker.net, and various
 other providers.
 
 For command line help:
+
   Run the program with the --help flag
+
+Quick start:
+
+  The command in its basic form will connect to a supporting service and update
+  the specified host name with an IP address as determined below.  For example:
+
+    dns_update.py \\
+      --provider google \\
+      --password ppppp  \\
+      --username uuuuu  \\
+      --hostname example.rscs.site
+
+  would determine current public DNS IPv4 address for the client and the current
+  actual IPv4 address for the client.  If the two addresses differ, the program would then update the Google domain service
+  for the specified host with the current IPv4 address.
+
+    dns_update.py \\
+      --provider google \\
+      --password ppppp  \\
+      --username uuuuu  \\
+      --hostname victoria.rscs.site \\
+      --save example.conf
+
+  would write the configuration datsa to the file example.conf and exit.
+
+    dns_update.py -i 120 example.conf
+
+  would load the existing configuration file example.conf and perform the
+  configured processing to check and if required update the IPv4 address in DNS every 120 seconds.
 
 How it works:
 
