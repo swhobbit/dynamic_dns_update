@@ -6,12 +6,12 @@ default:
 
 doc: README.txt
 
+install: /usr/local/sbin/${MAIN}
+
 README.txt: $(MAIN)
 	stty cols 80
 	pydoc3 ./$^ > $@
 	reset
-
-install: /usr/local/sbin/${MAIN}
 
 /usr/local/sbin/${MAIN}: ${MAIN}
 	cp $^ $@

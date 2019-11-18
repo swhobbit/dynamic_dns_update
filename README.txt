@@ -25,8 +25,9 @@ DESCRIPTION
           --hostname example.rscs.site
     
       would determine current public DNS IPv4 address for the client and the current
-      actual IPv4 address for the client.  If the two addresses differ, the program would then update the Google domain service
-      for the specified host with the current IPv4 address.
+      actual IPv4 address for the client.  If the two addresses differ, the program
+      would then update the Google domain service for the specified host with the
+      current IPv4 address.
     
         dns_update.py \
           --provider google \
@@ -40,7 +41,8 @@ DESCRIPTION
         dns_update.py -i 120 example.conf
     
       would load the existing configuration file example.conf and perform the
-      configured processing to check and if required update the IPv4 address in DNS every 120 seconds.
+      configured processing to check and if required update the IPv4 address in DNS
+      every 120 seconds.
     
     How it works:
     
@@ -125,7 +127,7 @@ CLASSES
      |  generic_optional_flags = ('wildcard', 'mx', 'backmx', 'tld')
 
 VERSION
-    1.0.1
+    1.0.2
 
 AUTHOR
     Kendra Electronic Wonderworks (uupc-help@kew.com)
