@@ -1,4 +1,5 @@
 MAIN=dns_update.py
+COLUMNS=$(shell tput cols)
 
 default:
 	@echo default target not supported.
@@ -11,7 +12,7 @@ install: /usr/local/sbin/${MAIN}
 README.txt: $(MAIN)
 	stty cols 80
 	pydoc3 ./$^ > $@
-	reset
+	stty cols $(COLUMNS)
 
 /usr/local/sbin/${MAIN}: ${MAIN}
 	cp $^ $@
