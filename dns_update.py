@@ -21,8 +21,9 @@ Quick start:
       --hostname example.rscs.site
 
   would determine current public DNS IPv4 address for the client and the current
-  actual IPv4 address for the client.  If the two addresses differ, the program would then update the Google domain service
-  for the specified host with the current IPv4 address.
+  actual IPv4 address for the client.  If the two addresses differ, the program
+  would then update the Google domain service for the specified host with the
+  current IPv4 address.
 
     dns_update.py \\
       --provider google \\
@@ -36,7 +37,8 @@ Quick start:
     dns_update.py -i 120 example.conf
 
   would load the existing configuration file example.conf and perform the
-  configured processing to check and if required update the IPv4 address in DNS every 120 seconds.
+  configured processing to check and if required update the IPv4 address in DNS
+  every 120 seconds.
 
 How it works:
 
@@ -110,6 +112,8 @@ import urllib
 import urllib.parse
 import urllib.request
 
+# pylint: disable=C0302
+
 # NOTE    NOTE    NOTE
 # In broad terms, this source is in three parts, which would normally be three
 # or more files:
@@ -123,7 +127,7 @@ import urllib.request
 # this single source file.
 
 __author__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
-__version__ = '1.0.1'
+__version__ = '1.0.2'
 
 _USER_AGENT = '{} by {} version {}'.format(os.path.basename(__file__),
                                            __author__,
@@ -216,8 +220,8 @@ _PROVIDERS = {
                       update_url='https://members.easydns.com/dyn/dyndns.php',
                       enabled_flags=Provider.generic_optional_flags),
     _GOOGLE:Provider(_GOOGLE,
-                     enabled_flags=(_OFFLINE_FLAG,) +
-                                    (Provider.generic_optional_flags),
+                     enabled_flags=
+                     (_OFFLINE_FLAG,) + (Provider.generic_optional_flags),
                      update_url='https://domains.google.com/nic/update'),
     _TUNNEL_BROKER:Provider(_TUNNEL_BROKER,
                             check_provider_address=False, # No hostname to query
@@ -546,14 +550,14 @@ def _CheckConflicts(args, parser):
         options = [_COMMAND_PREFIX + option
                    for option in allowed if option not in restricted]
         conflicts = [_COMMAND_PREFIX + conflict for conflict in conflicts]
-        parser.error('Options not allowed:\n\t{}\n\n'
-                     'When loading configuration(s) from file(s) '
-                     'and optionally running continuously, only the following additional '
-                     'options '
-                     'may by specified on the command line:\n\t{}'.format(
-                         '\n\t'.join(sorted(conflicts)),
-                         '\n\t'.join(sorted(options)),
-                         prefix=_COMMAND_PREFIX))
+        parser.error(
+            'Options not allowed:\n\t{}\n\n'
+            'When loading configuration(s) from file(s) and optionally running '
+            'continuously, only the following additional options may be '
+            'specified on the command line:\n\t{}'.format(
+                '\n\t'.join(sorted(conflicts)),
+                '\n\t'.join(sorted(options)),
+                prefix=_COMMAND_PREFIX))
         parser.exit(3)
 
   conflict_tuples = [
@@ -645,7 +649,8 @@ def _GetRecordedDNSAddress(configuration):
   '''Report IPv4 address of specified hostname as known by provider.'''
   if configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1] > time.time():
     _LOGGER.debug(
-        'Using cached address value %s, cache expires at %s',
+        'Using client %s cached address %s, entry expires at %s',
+        configuration[_HOSTNAME_FLAG],
         _AddrToStr(configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][0]),
         time.ctime(configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][1]))
     return configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS][0]
@@ -663,7 +668,7 @@ def _GetRecordedDNSAddress(configuration):
                     str(ex))
       return None
 
-  # checking not enabled.
+  # checking of current address not enabled.
   return None
 
 
@@ -676,19 +681,17 @@ def _QueryCurrentIPAddress(configuration,
     '''IPv4-only replacement for HTTPConnnection create_connection'''
     hostname, port = hostname_port
 
-    res = None
     try:
-      # The secret sauce is only query IPv4 familt addresses, so we only get
-      # an IPv4 address back for connectting to.
+      # The secret sauce is to only query IPv4 family addresses, so we only get
+      # an IPv4 address back that we connect from OUR IPv4 address to.
       res = socket.getaddrinfo(hostname,
                                port,
                                socket.AF_INET,
                                socket.SOCK_STREAM)
       address_family, socktype, proto, _, hostaddr_port = res[0]
     except Exception as err:
-      _LOGGER.error("Cannot look up %s, result was %s, exception:\n%s",
+      _LOGGER.error("Cannot look up client %s; exception:\n%s",
                     hostname,
-                    res,
                     err)
       raise
 
@@ -723,9 +726,9 @@ def _QueryCurrentIPAddress(configuration,
             url_parts.scheme))
 
   # The secret sauce for both HTTP and HTTPS connections is our override of the
-  # _create_connection which only queries IPv4 server addresses and thus queries
-  # via the client's IPv4 address.   (A query via IPv6 obviously returns an IPv6
-  # address.)
+  # _create_connection which only queries IPv4 server addresses and thus
+  # connects via the client's IPv4 address. (A query of the client address via
+  # IPv6 obviously returns an IPv6 address.)
   connection._create_connection = _CreateConnection    # pylint: disable=W0212
 
   try:
@@ -784,8 +787,8 @@ def _GetCurrentPublicIPAddress(configuration,
                                level=logging.DEBUG):
   '''Determine the current public client address to send to the provider'''
   if _OFFLINE_FLAG in configuration:
-      return _OFFLINE_FLAG
-  if _MYIP_FLAG in configuration:
+    current_client_address = _OFFLINE_FLAG
+  elif _MYIP_FLAG in configuration:
     current_client_address = configuration[_MYIP_FLAG]
   elif configuration[_QUERY_URL_FLAG]:
     query_url = configuration[_QUERY_URL_FLAG]
@@ -841,7 +844,7 @@ def _UpdateDNSAddress(configuration, current_client_address):
 
   request = urllib.request.Request(
       '{}?{}'.format(configuration[_UPDATE_URL_FLAG], '&'.join(parameters)),
-                     headers={'User-Agent':_USER_AGENT})
+      headers={'User-Agent':_USER_AGENT})
 
   _StorePassword(request.get_full_url(), configuration)
 
@@ -857,13 +860,13 @@ def _UpdateDNSAddress(configuration, current_client_address):
     parameters.append(
         '{}={}'.format(_OFFLINE_FLAG, configuration[_OFFLINE_FLAG]))
   elif current_client_address:
-    parameters.append('{}={}'.format(_MYIP_FLAG,
-                                     _AddrToStr(current_client_address)))
+    parameters.append('{}={}'.format(
+        _MYIP_FLAG, _AddrToStr(current_client_address)))
 
   # Now rebuild the request with flags added after _StorePassword was called
   request = urllib.request.Request(
       '{}?{}'.format(configuration[_UPDATE_URL_FLAG], '&'.join(parameters)),
-                     headers={'User-Agent':_USER_AGENT})
+      headers={'User-Agent':_USER_AGENT})
 
   try:
     _LOGGER.debug('Invoking: %s', request.get_full_url())
@@ -893,9 +896,7 @@ def _UpdateDNSAddress(configuration, current_client_address):
                   configuration[_HOSTNAME_FLAG],
                   request.origin_req_host,
                   line))
-
-      return True
-  except (urllib.error.HTTPError, urllib.error.URLError) as ex:
+  except urllib.error.URLError as ex:
     _LOGGER.error('Error processing %s: %s', request.get_full_url(), ex)
     raise ex
 
@@ -909,17 +910,18 @@ def _ProcessUpdate(configuration, client_query_cache):
     recorded_dns_address = _GetRecordedDNSAddress(configuration)
     if (not recorded_dns_address or
         recorded_dns_address != current_client_address):
+      # reset any cache entry, then perform the actual update.
+      configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
+      _UpdateDNSAddress(configuration, current_client_address)
+      # After update, refresh cache entry
+      configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (
+          current_client_address,
+          time.time() + configuration[_CACHE_PROVIDER_ADDRESS_SECONDS])
       _LOGGER.info(
-          'Address for %s will be updated from %s to %s',
+          'Address for %s updated from %s to %s',
           hostname,
           _AddrToStr(recorded_dns_address),
           _AddrToStr(current_client_address))
-      # reset any cache entry, then perform the actual update.
-      configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
-      if _UpdateDNSAddress(configuration, current_client_address):
-        configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (
-            current_client_address,
-            time.time() + configuration[_CACHE_PROVIDER_ADDRESS_SECONDS])
     else:
       _LOGGER.debug(
           'No update needed for %s, address is %s',
