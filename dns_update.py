@@ -8,22 +8,37 @@ other providers.
 This program requires Python 3.7.
 '''
 
-import argparse
-import base64
-import http
-import http.client
-from http import HTTPStatus
-import logging
-import logging.handlers
-import os.path
-import pickle
-import re
-import socket
-import sys
-import time
-import urllib
-import urllib.parse
-import urllib.request
+# Since thias progream used to be used with Python 2, we both check the version
+# trap missing imports (which indicate the version of Python is too old).
+try:
+  import sys
+
+  if sys.version_info.major < 3:
+    print('\nVersion of Python is too old. Program requires version 3.7. '
+          '\nCurrent version is {}'.format(sys.version))
+    sys.exit(100)
+
+  import argparse
+  import base64
+  import http
+  import http.client
+  from http import HTTPStatus
+  import logging
+  import logging.handlers
+  import os.path
+  import pickle
+  import re
+  import socket
+  import time
+  import urllib
+  import urllib.parse
+  import urllib.request
+except (ImportError, AttributeError) as ex:
+
+  print('\nVersion of Python is too old to determine version. '
+        'Program requires version 3.'
+        '\nCurrent version is {}'.format(sys.version))
+  sys.exit(101)
 
 # NOTE    NOTE    NOTE
 # In broad terms, this source is in three parts, which would normally be three
@@ -38,12 +53,11 @@ import urllib.request
 # this single source file.
 
 __author__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
-__version__ = '1.0.2'
+__version__ = '1.0.3'
 
 _USER_AGENT = '{} by {} version {}'.format(os.path.basename(__file__),
                                            __author__,
                                            __version__)
-
 
 _LOGGER = logging.getLogger(__file__)
 
@@ -614,7 +628,6 @@ def _QueryCurrentIPAddress(configuration,
       sock.bind(source_address)
     sock.connect(hostaddr_port)
     return sock
-
 
   if _QUERY_URL_FLAG not in configuration or not configuration[_QUERY_URL_FLAG]:
     return None
