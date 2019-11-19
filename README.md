@@ -100,6 +100,7 @@ avoided completely if the address has not changed.
 - In some cases, the hostname has no published IPV4 address in DNS (example: when providing an IPv6 tunnel end point) or it may wrong (example: when the updated URL is the not live DNS provider.  In such cases:
    * The check of the hostname in DNS can be disabled.
    * When in polling mode, the updated record's IP address can be cached in memory to avoid duplicate updates.
+- **NOTE:** If the client host running `dns_update.py` is IPv6 enabled *and* the --no_query_url (suppressing explicit query of the host public IPv4 address) option is specified, the server will see the host as an IPv6 host.  Thus, Bad Things will happen.
 
 ## Other References
 - https://support.easydns.com/tutorials/dynamicUpdateSpecs.php
