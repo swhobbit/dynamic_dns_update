@@ -1,4 +1,4 @@
-# dbns_update.py - Client for IPv4 Dynamic DNS updates 
+# dbns_update.py - Client For IPv4 Dynamic DNS Updates 
 ## Introduction 
 
 This program updates a dynamic DNS service to provide an IPv4 address for a   publicly accessible host which has its IP address assigned by DHCP or dynamic method.
@@ -97,9 +97,7 @@ connections.
 - By doing a simple anonymous query for the public IP address and comparing
 it to the current DNS address of the hostname, the server update is
 avoided completely if the address has not changed.
-- In some cases, the hostname has no published IPV4 address in DNS (example: when
-providing an IPv6 tunnel end point) or it may wrong (example:
-when the updated URL is the not live DNS provider.  In such cases:
+- In some cases, the hostname has no published IPV4 address in DNS (example: when providing an IPv6 tunnel end point) or it may wrong (example: when the updated URL is the not live DNS provider.  In such cases:
    * The check of the hostname in DNS can be disabled.
    * When in polling mode, the updated record's IP address can be cached in memory to avoid duplicate updates.
 
