@@ -8,7 +8,7 @@ other providers.
 This program requires Python 3.7.
 '''
 
-# Since thias progream used to be used with Python 2, we both check the version
+# Since this program used to be used with Python 2, we both check the version
 # trap missing imports (which indicate the version of Python is too old).
 try:
   import sys
@@ -53,7 +53,7 @@ except (ImportError, AttributeError) as ex:
 # this single source file.
 
 __author__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
-__version__ = '1.0.3'
+__version__ = '1.0.4'
 
 _USER_AGENT = '{} by {} version {}'.format(os.path.basename(__file__),
                                            __author__,
