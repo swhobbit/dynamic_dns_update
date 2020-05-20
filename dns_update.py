@@ -420,7 +420,7 @@ def _BuildFileArguments(parser, filetype=None):
                          '-s',
                          default=argparse.SUPPRESS,
                          metavar='OUTPUT-FILE',
-                         type=(filetype or argparse.FileType('wx')),
+                         type=(filetype or argparse.FileType('wb')),
                          help='Name of a configuration file to write for '
                          'later use. '
                          'The file must not exist. '
@@ -430,7 +430,7 @@ def _BuildFileArguments(parser, filetype=None):
                          default=argparse.SUPPRESS,
                          metavar='FILE', # ('FILE-1', 'FILE-2'),
                          nargs='*',
-                         type=(filetype or argparse.FileType('r')),
+                         type=(filetype or argparse.FileType('rb')),
                          help='Load configuration file(s) previously written '
                          'with the {}{} flag and process the provider defined '
                          'in each. '
