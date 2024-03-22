@@ -15,7 +15,7 @@ try:
 
   if sys.version_info.major < 3:
     print('\nVersion of Python is too old. Program requires version 3.7. '
-          '\nCurrent version is {}'.format(sys.version))
+          f'\nCurrent version is {sys.version}')
     sys.exit(100)
 
   import argparse
@@ -53,11 +53,14 @@ except (ImportError, AttributeError) as ex:
 # this single source file.
 
 __author__ = 'Kendra Electronic Wonderworks (uupc-help@kew.com)'
-__version__ = '1.0.4'
+__version__ = '1.0.5'
+__copyright__ = (f'Version {__version__}.\n'
+                 f'Copyright 2016-2024 by {__author__}.\n'
+                 'All commercial rights reserved.\n'
+                )
 
-_USER_AGENT = '{} by {} version {}'.format(os.path.basename(__file__),
-                                           __author__,
-                                           __version__)
+_USER_AGENT = (f'{os.path.basename(__file__)} '
+               f'by {__author__} version {__version__}')
 
 _LOGGER = logging.getLogger(__file__)
 
@@ -123,7 +126,7 @@ class Provider():
 
   def __init__(self, name,
                update_url=None,
-               query_url='https://domains.google.com/checkip',
+               query_url='https://www.kew.com/checkip/',
                enabled_flags=None,
                cache_provider_address_seconds=0,
                check_provider_address=True):
@@ -142,11 +145,12 @@ _PROVIDERS = {
     _EXTENDED:Provider(_EXTENDED,
                        enabled_flags=Provider.generic_optional_flags),
     _EASYDNS:Provider(_EASYDNS,
-                      update_url='https://members.easydns.com/dyn/dyndns.php',
+                      update_url='https://api.cp.easydns.com/dyn/tomato.php',
                       enabled_flags=Provider.generic_optional_flags),
     _GOOGLE:Provider(_GOOGLE,
                      enabled_flags=
                      (_OFFLINE_FLAG,) + (Provider.generic_optional_flags),
+                     query_url='https://domains.google.com/checkip',
                      update_url='https://domains.google.com/nic/update'),
     _TUNNEL_BROKER:Provider(_TUNNEL_BROKER,
                             check_provider_address=False, # No hostname to query
@@ -185,7 +189,7 @@ def _PreparseArguments(args):
     tuple with:
     - default provider to base full parsing on
     - whether or not full configuration is needed (that is, that NO
-      configuration files) were specififed on the command line
+      configuration files) were specified on the command line
   '''
   preparser = argparse.ArgumentParser(
       description='Dynamic DNS client provider',
@@ -216,8 +220,7 @@ def _BuildGeneralArguments(parser):
                        '-v',
                        help='Print the program version',
                        action='version',
-                       version='%(prog)s by {} version {}'.format(
-                           __author__, __version__))
+                       version=f'%(prog)s {__copyright__}')
 
   general.add_argument(_COMMAND_PREFIX + _PROVIDER_NAME_FLAG,
                        '-P',
@@ -523,12 +526,13 @@ def _BuildCommandLineParser(args):
       description='Dynamic DNS client',
       add_help=True,
       epilog='The above listed flags are valid for provider "{}". '
-      'For the flags valid for another provider, specifiy the '
+      'For the flags valid for another provider, specify the '
       '{prefix}{} flag '
       'with the {prefix}help flag on the command '
-      'line.'.format(provider.name,
+      'line.\n{copyright}'.format(provider.name,
                      _PROVIDER_NAME_FLAG,
-                     prefix=_COMMAND_PREFIX))
+                     prefix=_COMMAND_PREFIX,
+                     copyright=__copyright__))
 
   _BuildGeneralArguments(parser)
   _BuildProviderArguments(parser, provider, is_configuration_needed)
@@ -698,7 +702,7 @@ def _QueryCurrentIPAddress(configuration,
                                  response.getheaders(),
                                  response.fp)
   except IOError as ex:
-    _LOGGER.warning('Error retrieving current IP address: %s', ex)
+    _LOGGER.warning('Error retrieving current IP address: %s', str(ex))
     raise
   finally:
     connection.close()
@@ -802,7 +806,7 @@ def _UpdateDNSAddress(configuration, current_client_address):
 
       if line:
         token = line.split()
-        if token[0] in ['good', 'nochg']:
+        if token[0] in ['good', 'nochg', 'NOERROR']:
           _LOGGER.debug(
               'Success response "%s" from %s for host %s',
               token[0],
@@ -821,7 +825,9 @@ def _UpdateDNSAddress(configuration, current_client_address):
                   request.origin_req_host,
                   line))
   except urllib.error.URLError as ex:
-    _LOGGER.error('Error processing %s: %s', request.get_full_url(), ex)
+    _LOGGER.error('Exception processing %s: %s',
+                  request.get_full_url(),
+                  str(ex))
     raise ex
 
 
@@ -853,9 +859,8 @@ def _ProcessUpdate(configuration, client_query_cache):
           _AddrToStr(recorded_dns_address))
   except IOError as ex:
     _LOGGER.error(
-        'Update processing for %s failed: %s',
-        hostname,
-        ex)
+        f'{type(ex).__name__} Exception during processing for '
+        f'{hostname}: {str(ex)}')
     configuration[_CACHE_OF_CURRENT_IP_ADDRESS_IN_DNS] = (None, 0)
 
 def _InitializeLogging(logger):
