@@ -5,7 +5,7 @@ After=systemd-networkd.service network.service
 [Service]
 Type=simple
 User=dynupdte
-ExecStart=/usr/local/sbin/dns_update.py -i 60 /etc/dhcp/localhost.conf /etc/dhcp/tunnel.conf
+ExecStart=/usr/local/sbin/dns_update.py -i 600 /usr/local/etc/dns_update.conf
 StandardOutput=null
 
 [Install]
